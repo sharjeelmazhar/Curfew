@@ -63,7 +63,9 @@ python3 agent/curfew.py --dry-run apps <user>          # what the phone would se
 - **Browser activity:** `browsers` op reads each account's Firefox (`places.sqlite`, open tabs from
   `sessionstore-backups/recovery.jsonlz4`, decoded by a pure-Python LZ4) and Chrome/Chromium
   (`History`, `keyword_search_terms`) by copying the database first, so it works while the browser
-  is open. Chrome's open tabs cannot be read; "open now" there is the last 90 s of history. History is
+  is open. Chrome's open tabs cannot be read; "open now" there is the last 90 s of history. "Open now"
+  is shown only while the browser process is actually running (`_running`), so a closed browser's
+  saved session is never shown as open. History is
   the last `HISTORY_DAYS` (7) days, capped at `HISTORY_MAX` rows. In the app each page is tappable
   and opens in the phone's browser; the browser screen polls every 2 s so a new tab shows quickly.
   Private/incognito windows leave nothing on disk and are not shown.
@@ -78,7 +80,7 @@ python3 agent/curfew.py --dry-run apps <user>          # what the phone would se
 
 ## State
 
-- Released: **1.1.6** (laptop side and app); `main` equals the release. App versionName 1.1.
+- Released: **1.1.7** (laptop side and app); `main` equals the release. App versionName 1.1.
   The app shows bundled logos for common apps (`Logos.kt`, `res/drawable-nodpi/logo_*.png`).
   Each account's page has a "Shut down the computer" box above "Internet" (same timer layout).
 - A sister-in-law's Galaxy Note 8 (Android 9) runs a separate APK, never from GitHub: Samsung's
