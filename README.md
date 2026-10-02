@@ -99,7 +99,7 @@ This needs the standard Ubuntu (GNOME) login screen.
 
 ### Websites they have visited
 
-On an account's page, under **Websites**, you see each browser the person has used — Firefox, Google Chrome, Chromium. Tap one to see the pages it has open right now and the recent pages it has visited, newest first. Searches show the words they typed ("Searched 'how to beat the ender dragon'"), and the search box at the top lets you look for a word across everything — type "netflix" or "minecraft" and only the matching pages stay.
+On an account's page, under **Websites**, you see each browser the person has used — Firefox, Google Chrome, Chromium. Tap one to see the pages it has open right now and every page it has visited in the last 7 days, newest first. Tap any page to open it in your phone's own browser and see what it was. Searches show the words they typed ("Searched 'how to beat the ender dragon'"), and the search box at the top lets you look for a word across everything — type "netflix" or "minecraft" and only the matching pages stay.
 
 This reads the browser's own history on the laptop, so it works even when the person is not logged in at that moment, as long as the laptop is on and at home. Clearing the browser history clears it here too.
 

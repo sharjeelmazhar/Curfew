@@ -26,6 +26,7 @@ import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LockOpen
 import androidx.compose.material.icons.automirrored.rounded.Logout
@@ -66,6 +67,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
@@ -751,7 +753,8 @@ fun BrowserScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: St
     val live = liveMap[id] ?: Live()
     var browsers by remember { mutableStateOf<List<BrowserInfo>?>(null) }
     var query by rememberSaveable { mutableStateOf("") }
-    Every(5000, id + userName + browserId) {
+    // A short poll so a newly opened tab turns up in "Open now" quickly.
+    Every(2000, id + userName + browserId) {
         repo.refresh(id)
         repo.browsers(id, userName)?.let { browsers = it }
     }
@@ -759,6 +762,13 @@ fun BrowserScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: St
     val open = b?.open?.filter { it.matches(query) }.orEmpty()
     val recent = b?.recent?.filter { it.matches(query) }.orEmpty()
     val now = System.currentTimeMillis() / 1000
+    val uriHandler = LocalUriHandler.current
+    val scope = rememberCoroutineScope()
+    // Tapping a page opens it in the phone's own browser. away = true so coming back does not re-lock.
+    val openInBrowser: (WebEntry) -> Unit = { e ->
+        if (e.url.isNotBlank()) runCatching { AppLock.away = true; uriHandler.openUri(e.url) }
+            .onFailure { AppLock.away = false; scope.say(snack, "Could not open that page") }
+    }
 
     Page(b?.name ?: "Websites", snack, onBack) {
         item {
@@ -777,49 +787,48 @@ fun BrowserScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: St
             else -> {
                 item { SectionLabel("Open now") }
                 if (open.isEmpty()) item { Note(if (query.isBlank()) "No tabs open right now." else "No open tabs match “${query.trim()}”.") }
-                else item { Card(padding = 8.dp) { WebList(open, now) } }
+                else items(open, key = { "o:" + it.url }) { WebRow(it, now, openInBrowser) }
 
                 item { SectionLabel("Recently visited") }
-                if (recent.isEmpty()) item { Note(if (query.isBlank()) "No history yet." else "No pages match “${query.trim()}”.") }
-                else item { Card(padding = 8.dp) { WebList(recent, now) } }
+                if (recent.isEmpty()) item { Note(if (query.isBlank()) "No history in the last 7 days." else "No pages match “${query.trim()}”.") }
+                else items(recent, key = { "r:" + it.url }) { WebRow(it, now, openInBrowser) }
             }
         }
     }
 }
 
 @Composable
-private fun WebList(entries: List<WebEntry>, nowSeconds: Long) {
-    entries.forEachIndexed { i, e ->
-        if (i > 0) HorizontalDivider(Modifier.padding(start = 68.dp, end = 12.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-        WebRow(e, nowSeconds)
-    }
-}
-
-@Composable
-private fun WebRow(e: WebEntry, nowSeconds: Long) {
+private fun WebRow(e: WebEntry, nowSeconds: Long, onOpen: (WebEntry) -> Unit) {
     val scheme = MaterialTheme.colorScheme
     val search = e.search.isNotBlank()
-    Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            Modifier.size(44.dp).clip(CircleShape).background(if (search) scheme.tertiaryContainer else scheme.secondaryContainer),
-            contentAlignment = Alignment.Center,
+    Surface(shape = MaterialTheme.shapes.large, color = LocalExtra.current.card, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.fillMaxWidth().clickable { onOpen(e) }.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                if (search) Icons.Rounded.Search else Icons.Rounded.Public, null, Modifier.size(22.dp),
-                tint = if (search) scheme.onTertiaryContainer else scheme.onSecondaryContainer,
-            )
-        }
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                if (search) "Searched “${e.search}”" else e.label,
-                style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
-            )
-            val when0 = formatWhen(e.whenSeconds, nowSeconds)
-            Text(
-                listOf(e.host, when0).filter { it.isNotBlank() }.joinToString(" · "),
-                style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
-            )
+            Box(
+                Modifier.size(44.dp).clip(CircleShape).background(if (search) scheme.tertiaryContainer else scheme.secondaryContainer),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    if (search) Icons.Rounded.Search else Icons.Rounded.Public, null, Modifier.size(22.dp),
+                    tint = if (search) scheme.onTertiaryContainer else scheme.onSecondaryContainer,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    if (search) "Searched “${e.search}”" else e.label,
+                    style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                )
+                val when0 = formatWhen(e.whenSeconds, nowSeconds)
+                Text(
+                    listOf(e.host, when0).filter { it.isNotBlank() }.joinToString(" · "),
+                    style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Icon(Icons.AutoMirrored.Rounded.OpenInNew, "Open in the browser", Modifier.size(20.dp), tint = scheme.onSurfaceVariant)
         }
     }
 }

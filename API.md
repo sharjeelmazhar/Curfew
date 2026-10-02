@@ -84,7 +84,7 @@ history). An agent without `caps` is the first version.
 
 For `browsers`: `id` is `firefox`, `chrome` or `chromium`; `open` is the tabs open now (read
 exactly for Firefox, approximated as the last few minutes of history for Chrome/Chromium, which
-do not expose their open tabs); `recent` is the last 15 pages of history, newest first; `when` is
+do not expose their open tabs); `recent` is the history of the last 7 days, newest first (capped at 1000 rows); `when` is
 unix seconds and `search` holds the words typed into a search engine when the page was a search,
 else `""`. A browser only appears if the account has used it. Private/incognito windows are not on
 disk and never appear. The reply is signed but, like everything on this protocol, not encrypted.
