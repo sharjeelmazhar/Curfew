@@ -42,7 +42,7 @@ python3 agent/curfew.py --dry-run apps <user>          # what the phone would se
 
 - **Protocol:** plain HTTP on port 787, every message HMAC-signed with a per-phone key from
   QR pairing, one-time nonces against replay. Nothing is encrypted, so no secret may travel over
-  it. Status carries `caps` (`seconds`, `net`, `login`) so the app hides what an agent cannot do.
+  it. Status carries `caps` (`seconds`, `net`, `login`, `browsers`) so the app hides what an agent cannot do.
 - **Timers:** wall-clock deadlines in `/var/lib/curfew/state.json`; `timer_loop` owns the
   shut-down countdown and the per-account internet countdowns.
 - **Internet per account:** iptables/ip6tables chain `CURFEW`, rules by uid, never for an admin
@@ -78,7 +78,8 @@ python3 agent/curfew.py --dry-run apps <user>          # what the phone would se
 
 ## State
 
-- Released: laptop side **1.1.2**; `main` equals the release. App versionName 1.1.
+- Released: **1.1.5** (laptop side and app); `main` equals the release. App versionName 1.1.
+  The app shows bundled logos for common apps (`Logos.kt`, `res/drawable-nodpi/logo_*.png`).
 - `TIMER_MIN_SECONDS` in `Models.kt` is **15, a testing value**. The user will ask for the final
   build: set it to `5 * 60` (max stays 6 h), rebuild, release the APK. Do not change it before then.
 - Installed and tested by the user on their own Ubuntu 26.04 desktop (wired) with a Redmi Note 11.
