@@ -10,6 +10,7 @@ From the phone you can:
 - log someone in without typing their password in front of them
 - turn the internet off for one account, now or after a countdown, while the computer stays on
 - see what each person has open, including programs started from a terminal
+- see which websites each person has visited, and what they searched for, in each browser
 
 It works whoever is logged in on the laptop, and also when nobody is logged in yet.
 
@@ -95,6 +96,16 @@ Nothing is stored on the phone and no password travels over the network.
 - the file is deleted when Curfew is removed
 
 This needs the standard Ubuntu (GNOME) login screen.
+
+### Websites they have visited
+
+On an account's page, under **Websites**, you see each browser the person has used — Firefox, Google Chrome, Chromium. Tap one to see the pages it has open right now and the recent pages it has visited, newest first. Searches show the words they typed ("Searched 'how to beat the ender dragon'"), and the search box at the top lets you look for a word across everything — type "netflix" or "minecraft" and only the matching pages stay.
+
+This reads the browser's own history on the laptop, so it works even when the person is not logged in at that moment, as long as the laptop is on and at home. Clearing the browser history clears it here too.
+
+What it cannot show: **private or incognito windows**. Browsers write nothing to disk for those, so there is nothing to read — the honest way to handle them is to switch private windows off, which can be added later. Open tabs are read exactly for Firefox; for Chrome they are shown as "the last few minutes", because Chrome does not let anything read its open tabs. Other browsers (Brave, Edge, Tor) are not read.
+
+The list travels over the home Wi-Fi signed but **not encrypted**, the same as everything else Curfew sends, so treat it as private to the home network.
 
 ### Internet for one account
 

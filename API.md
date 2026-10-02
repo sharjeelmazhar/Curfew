@@ -68,6 +68,7 @@ Unauthenticated refusals (HTTP 4xx, treat as hints only): `unknown_phone`, `bad_
 |---|---|---|
 | `status` | | `id`, `name`, `os`, `caps`, `users: [{name, full, admin, state, net, net_timer?}]`, `timer: null \| {remaining, warn}` |
 | `apps` | `user` | `apps: [{name, detail, age, terminal}]`, newest first, at most 15 |
+| `browsers` | `user` | `browsers: [{id, name, open, recent}]`; `open` and `recent` are `[{url, title, host, when, search}]`, newest first |
 | `poweroff`, `reboot` | | |
 | `timer_set` | `seconds` (10-86400) or `minutes` (1-1440), `warn` (bool) | `timer` |
 | `timer_cancel` | | `timer: null` |
@@ -78,7 +79,15 @@ Unauthenticated refusals (HTTP 4xx, treat as hints only): `unknown_phone`, `bad_
 | `forget` | | removes the calling phone |
 
 `caps` lists what this agent can do: `seconds` (timers in seconds), `net` (iptables is present),
-`login` (the login screen is set up to ask the agent). An agent without `caps` is the first version.
+`login` (the login screen is set up to ask the agent), `browsers` (the agent can read browser
+history). An agent without `caps` is the first version.
+
+For `browsers`: `id` is `firefox`, `chrome` or `chromium`; `open` is the tabs open now (read
+exactly for Firefox, approximated as the last few minutes of history for Chrome/Chromium, which
+do not expose their open tabs); `recent` is the last 15 pages of history, newest first; `when` is
+unix seconds and `search` holds the words typed into a search engine when the page was a search,
+else `""`. A browser only appears if the account has used it. Private/incognito windows are not on
+disk and never appear. The reply is signed but, like everything on this protocol, not encrypted.
 `net` is `on` or `off`; `net_timer` is `{remaining, warn}` while a countdown runs. Admin accounts are
 always `on`.
 

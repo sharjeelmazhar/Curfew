@@ -157,6 +157,47 @@ fun parseApps(j: JSONObject): List<AppInfo> {
     }
 }
 
+/** One web page: a tab open now, or a page in the history. [search] holds the words typed into a
+ *  search engine when the page was a search, otherwise empty. [whenSeconds] is the last visit (unix). */
+data class WebEntry(
+    val url: String, val title: String, val host: String, val whenSeconds: Long, val search: String,
+) {
+    /** The main line to show: the search words, else the page title, else the site. */
+    val label: String get() = search.ifBlank { title }.ifBlank { host }.ifBlank { url }
+
+    /** Whether this page matches what the parent typed into the search box. */
+    fun matches(query: String): Boolean {
+        val q = query.trim()
+        return q.isEmpty() || listOf(title, host, search, url).any { it.contains(q, ignoreCase = true) }
+    }
+}
+
+/** A browser the account has used: the tabs open right now and the recent history, newest first. */
+data class BrowserInfo(val id: String, val name: String, val open: List<WebEntry>, val recent: List<WebEntry>)
+
+fun parseBrowsers(j: JSONObject): List<BrowserInfo> {
+    fun entries(a: JSONArray?): List<WebEntry> =
+        (0 until (a?.length() ?: 0)).mapNotNull { a?.optJSONObject(it) }.filter { it.optString("url").isNotEmpty() }.map {
+            WebEntry(it.optString("url"), it.optString("title"), it.optString("host"), it.optLong("when"), it.optString("search"))
+        }
+    val bs = j.optJSONArray("browsers") ?: JSONArray()
+    return (0 until bs.length()).mapNotNull { bs.optJSONObject(it) }.filter { it.optString("name").isNotEmpty() }.map {
+        BrowserInfo(it.optString("id"), it.optString("name"), entries(it.optJSONArray("open")), entries(it.optJSONArray("recent")))
+    }
+}
+
+/** When a page was last seen, in words: "Just now", "7 min ago", "3 h ago", "2 days ago". */
+fun formatWhen(whenSeconds: Long, nowSeconds: Long): String {
+    val d = nowSeconds - whenSeconds
+    return when {
+        whenSeconds <= 0L -> ""
+        d < 90 -> "Just now"
+        d < 3600 -> "${d / 60} min ago"
+        d < 2 * 86400 -> "${d / 3600} h ago"
+        else -> "${d / 86400} days ago"
+    }
+}
+
 /** How the phone currently sees a computer. */
 enum class Link { CHECKING, ON, OFF, NOT_RUNNING, NO_WIFI, OTHER_WIFI, NOT_RECOGNISED }
 
