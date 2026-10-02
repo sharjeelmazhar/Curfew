@@ -7,6 +7,7 @@ import json
 import os
 import secrets
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -32,8 +33,9 @@ def check(name, cond):
     print("ok    " + name)
 
 
-def start():
-    p = subprocess.Popen([sys.executable, HERE + "/curfew.py", "serve"], env=ENV, stderr=LOG)
+def start(fake=None):
+    env = dict(ENV, CURFEW_FAKE=HERE + "/../tools/demo/%s.json" % fake) if fake else ENV
+    p = subprocess.Popen([sys.executable, HERE + "/curfew.py", "serve"], env=env, stderr=LOG)
     for _ in range(50):
         try:
             http("GET", "/v1/hello")
@@ -59,6 +61,19 @@ def mac(key, *parts):
 
 def nonce():
     return http("GET", "/v1/hello")[1]["nonce"]
+
+
+def cli(*args, **env):
+    return subprocess.run([sys.executable, HERE + "/curfew.py", *args], env=dict(ENV, **env), capture_output=True, text=True)
+
+
+def elsewhere():
+    """A connection to the agent from another address than the tests use."""
+    s = socket.socket()
+    s.bind(("127.0.0.2", 0))
+    s.settimeout(5)
+    s.connect(("127.0.0.1", PORT))
+    return s
 
 
 def state():
@@ -166,8 +181,30 @@ try:
     check("unknown path is 404", http("GET", "/etc/passwd")[0] == 404)
     check("agent survived the bad requests", call(a, "status")[0] == 200)
 
+    # --- someone flooding the agent from another address does not keep the phone out
+    mine = nonce()
+    for _ in range(60):
+        with elsewhere() as sock:
+            sock.sendall(b"GET /v1/hello HTTP/1.0\r\n\r\n")
+            while sock.recv(4096):
+                pass
+    env = call(a, "status", envelope_only=True)
+    env["snonce"] = mine
+    env["mac"] = mac(a["key"], "req", a["phone"], mine, env["cnonce"], env["payload"])
+    check("a flood of hellos from elsewhere does not push out our nonce", http("POST", "/v1/call", env)[0] == 200)
+    idle = [elsewhere() for _ in range(30)]
+    time.sleep(0.3)
+    check("idle connections from elsewhere do not block the phone", call(a, "status")[0] == 200)
+    for sock in idle:
+        sock.close()
+
     # --- timer
+    check("status says what the agent can do", {"seconds", "net", "login"} <= set(s["caps"]))
     check("bad timer value refused", call(a, "timer_set", minutes=0)[1]["ok"] is False)
+    check("too short a timer refused", call(a, "timer_set", seconds=5)[1] == {"ok": False, "error": "bad_args"})
+    check("timer in seconds", call(a, "timer_set", seconds=15)[1]["timer"]["remaining"] == 15)
+    check("notices say the length in words", curfew.human(30) == "30 seconds" and curfew.human(60) == "1 minute"
+          and curfew.human(5400) == "1 hour 30 minutes" and curfew.human(7200) == "2 hours")
     check("timer set", call(a, "timer_set", minutes=30, warn=True)[1]["timer"]["remaining"] == 1800)
     time.sleep(1.2)
     rem = call(a, "status")[1]["timer"]["remaining"]
@@ -192,10 +229,59 @@ try:
     r = call(a, "logout", user=me)[1]
     check("logout answers", r == {"ok": True} or r["error"] == "not_logged_in")
 
+    # --- log in from the phone: the login screen asks 'curfew pam-login'
+    token = TMP + "/run/login/" + me
+    pam = lambda user=me, kind="auth": cli("pam-login", PAM_USER=user, PAM_TYPE=kind).returncode
+    check("no approval, no login", pam() == 1)
+    r = call(a, "login", user=me)[1]
+    check("login approved", r["ok"] and r["how"] in ("approved", "unlocked") and os.path.exists(token))
+    check("approval is private", oct(os.stat(token).st_mode & 0o777) == "0o600")
+    check("approval is for that account only", pam("root") == 1 and pam("nobody") == 1 and pam("../" + me) == 1)
+    check("approval is not used outside a login", pam(kind="account") == 1 and os.path.exists(token))
+    check("approved login is let in", pam() == 0)
+    check("approval works once", pam() == 1 and not os.path.exists(token))
+    call(a, "login", user=me)
+    open(token, "w").write(str(time.time() - 1))
+    check("expired approval is refused and removed", pam() == 1 and not os.path.exists(token))
+    call(a, "login", user=me)
+    call(a, "lock", user=me)
+    check("locking takes the approval back", not os.path.exists(token))
+    check("login for unknown account refused", call(a, "login", user="root")[1] == {"ok": False, "error": "bad_user"})
+
+    # --- internet per account (made-up accounts: dad is admin, gaming and classes are not)
+    agent.terminate(); agent.wait()
+    agent = start(fake="kids")
+    users = lambda: {u["name"]: u for u in call(a, "status")[1]["users"]}
+    check("internet is on to begin with", all(u["net"] == "on" and "net_timer" not in u for u in users().values()))
+    check("internet is never turned off for an admin", call(a, "net_set", user="dad", seconds=0)[1] == {"ok": False, "error": "is_admin"})
+    check("internet for unknown account refused", call(a, "net_set", user="x", seconds=0)[1] == {"ok": False, "error": "bad_user"})
+    check("bad internet countdown refused", call(a, "net_set", user="gaming", seconds=3)[1] == {"ok": False, "error": "bad_args"})
+    check("internet off now", call(a, "net_set", user="gaming", seconds=0)[1] == {"ok": True})
+    u = users()
+    check("only that account is off", u["gaming"]["net"] == "off" and u["classes"]["net"] == "on" and u["dad"]["net"] == "on")
+    check("internet back on", call(a, "net_clear", user="gaming")[1] == {"ok": True} and users()["gaming"]["net"] == "on")
+    check("internet countdown set", call(a, "net_set", user="classes", seconds=12, warn=True)[1] == {"ok": True})
+    u = users()["classes"]
+    check("internet still on while counting down", u["net"] == "on" and 9 <= u["net_timer"]["remaining"] <= 12 and u["net_timer"]["warn"])
+    agent.terminate(); agent.wait()
+    stt = state(); stt["net"]["classes"]["deadline"] = time.time() + 2
+    json.dump(stt, open(TMP + "/state.json", "w"))
+    agent = start(fake="kids")           # like a reboot shortly before the deadline
+    time.sleep(3.5)
+    u = users()["classes"]
+    check("internet countdown fires after restart", u["net"] == "off" and "net_timer" not in u)
+    check("a new countdown gives the internet back until it ends", call(a, "net_set", user="classes", seconds=600)[1]["ok"] and users()["classes"]["net"] == "on")
+    check("cancelling the countdown leaves it on", call(a, "net_clear", user="classes")[1]["ok"] and state()["net"] == {})
+    r = call(a, "login", user="dad")[1]
+    check("login for an account that is not logged in waits at the login screen", r["how"] == "approved" and r["seconds"] == 120)
+    check("login for an open session unlocks it", call(a, "login", user="classes")[1]["how"] == "unlocked")
+    agent.terminate(); agent.wait()
+    agent = start()
+
     # --- unpair from the laptop side, forget from the phone side
-    out = subprocess.run([sys.executable, HERE + "/curfew.py", "phones"], env=ENV, capture_output=True, text=True).stdout
+    out = cli("phones").stdout
     check("'curfew phones' lists both", "Dad's Galaxy 2" in out and " 1. " in out)
-    out = subprocess.run([sys.executable, HERE + "/curfew.py", "unpair", "Dad's Galaxy 2"], env=ENV, capture_output=True, text=True).stdout
+    out = cli("unpair", "Dad's Galaxy 2").stdout
     check("'curfew unpair' removes one", "Removed" in out)
     check("removed phone gets a signed 'unpaired' answer", call(b, "poweroff") == (200, {"ok": False, "error": "unpaired"}))
     check("other phone still works", call(a, "status")[1]["ok"])

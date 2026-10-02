@@ -5,10 +5,19 @@ import org.json.JSONObject
 
 /** Data, parsing and the wording shown to the parent. Plain JVM code, unit-tested. */
 
+/** [name] is what the computer calls itself. [alias] and [userAliases] (account name to
+ *  shown name) are the names given in this app; they exist only on this phone. */
 data class Computer(
     val id: String, val name: String, val phoneId: String, val key: String,
     val host: String, val port: Int, val addedAt: Long,
-)
+    val alias: String = "", val userAliases: Map<String, String> = emptyMap(),
+) {
+    val title get() = alias.ifBlank { name }
+    fun userTitle(u: UserInfo) = userAliases[u.name] ?: u.display
+}
+
+/** A name typed by the parent: one line, no stray spaces, not endless. */
+fun cleanAlias(text: String) = text.replace(Regex("\\s+"), " ").trim().take(40)
 
 /** A removed computer that has not yet been told to forget this phone. */
 data class Goodbye(val id: String, val phoneId: String, val key: String, val host: String, val port: Int, val since: Long)
@@ -21,6 +30,7 @@ data class StoreData(val computers: List<Computer> = emptyList(), val goodbyes: 
         .put("computers", JSONArray(computers.map {
             JSONObject().put("id", it.id).put("name", it.name).put("phone", it.phoneId).put("key", it.key)
                 .put("host", it.host).put("port", it.port).put("added", it.addedAt)
+                .put("alias", it.alias).put("users", JSONObject(it.userAliases))
         }))
         .put("goodbyes", JSONArray(goodbyes.map {
             JSONObject().put("id", it.id).put("phone", it.phoneId).put("key", it.key)
@@ -32,8 +42,9 @@ data class StoreData(val computers: List<Computer> = emptyList(), val goodbyes: 
      *  entry and queues a goodbye for the old key. */
     fun withPaired(c: Computer, now: Long): StoreData {
         val old = computers.find { it.id == c.id }
+        val named = if (old == null) c else c.copy(alias = old.alias, userAliases = old.userAliases)
         return copy(
-            computers = computers.filter { it.id != c.id } + c,
+            computers = computers.filter { it.id != c.id } + named,
             goodbyes = goodbyes + listOfNotNull(old?.let { Goodbye(it.id, it.phoneId, it.key, it.host, it.port, now) }),
         )
     }
@@ -44,6 +55,15 @@ data class StoreData(val computers: List<Computer> = emptyList(), val goodbyes: 
         return copy(computers = computers - c, goodbyes = goodbyes + Goodbye(c.id, c.phoneId, c.key, c.host, c.port, now))
     }
 
+    /** A blank [alias] goes back to the computer's own name. */
+    fun withAlias(id: String, alias: String) =
+        copy(computers = computers.map { if (it.id == id) it.copy(alias = cleanAlias(alias)) else it })
+
+    fun withUserAlias(id: String, user: String, alias: String) = copy(computers = computers.map {
+        val a = cleanAlias(alias)
+        if (it.id != id) it else it.copy(userAliases = if (a.isEmpty()) it.userAliases - user else it.userAliases + (user to a))
+    })
+
     fun withoutExpiredGoodbyes(now: Long) = copy(goodbyes = goodbyes.filter { now - it.since < GOODBYE_GIVE_UP_MS })
 
     companion object {
@@ -53,8 +73,10 @@ data class StoreData(val computers: List<Computer> = emptyList(), val goodbyes: 
             val gs = j.optJSONArray("goodbyes") ?: JSONArray()
             StoreData(
                 (0 until cs.length()).map { cs.getJSONObject(it) }.map {
+                    val users = it.optJSONObject("users") ?: JSONObject()
                     Computer(it.getString("id"), it.getString("name"), it.getString("phone"), it.getString("key"),
-                        it.getString("host"), it.getInt("port"), it.optLong("added"))
+                        it.getString("host"), it.getInt("port"), it.optLong("added"), it.optString("alias"),
+                        users.keys().asSequence().associateWith { k -> users.optString(k) })
                 },
                 (0 until gs.length()).map { gs.getJSONObject(it) }.map {
                     Goodbye(it.getString("id"), it.getString("phone"), it.getString("key"),
@@ -68,7 +90,7 @@ data class StoreData(val computers: List<Computer> = emptyList(), val goodbyes: 
 }
 
 enum class UserState(val label: String) {
-    NONE("Not logged in"), LOGGED_IN("Logged in"), LOCKED("Screen locked"), ACTIVE("In use right now");
+    NONE("Not logged in"), LOGGED_IN("Logged in, in the background"), LOCKED("Screen locked"), ACTIVE("In use right now");
 
     companion object {
         fun of(s: String) = when (s) {
@@ -80,21 +102,31 @@ enum class UserState(val label: String) {
     }
 }
 
-data class UserInfo(val name: String, val full: String, val admin: Boolean, val state: UserState) {
+/** [netOff]: the internet is turned off for this account. [netSeconds]: it turns off after this long. */
+data class UserInfo(
+    val name: String, val full: String, val admin: Boolean, val state: UserState,
+    val netOff: Boolean = false, val netSeconds: Int? = null,
+) {
     val display get() = full.ifBlank { name }
 }
 
-data class Status(val name: String, val os: String, val users: List<UserInfo>, val timerSeconds: Int?, val warn: Boolean) {
-    /** One line for the home card. */
-    fun headline(): String {
-        fun names(s: UserState) = users.filter { it.state == s }.map { it.display }
+/** [caps]: what the Curfew on that computer can do ("seconds", "net", "login"); an older one says nothing. */
+data class Status(
+    val name: String, val os: String, val users: List<UserInfo>, val timerSeconds: Int?, val warn: Boolean,
+    val caps: Set<String> = emptySet(),
+) {
+    /** One line for the home card: who is in front of it, and who else is still logged in. */
+    fun headline(nameOf: (UserInfo) -> String = { it.display }): String {
+        fun names(vararg s: UserState) = users.filter { it.state in s }.map(nameOf)
+        fun List<String>.all() = if (size > 1) dropLast(1).joinToString(", ") + " and " + last() else joinToString()
         val active = names(UserState.ACTIVE)
         val locked = names(UserState.LOCKED)
         val idle = names(UserState.LOGGED_IN)
+        val also = { others: List<String> -> if (others.isEmpty()) "" else " · " + others.all() + " also logged in" }
         return when {
-            active.isNotEmpty() -> active.joinToString(" and ") + (if (active.size > 1) " are" else " is") + " using it"
-            locked.isNotEmpty() -> "On, " + locked.joinToString(" and ") + " logged in, screen locked"
-            idle.isNotEmpty() -> "On, " + idle.joinToString(" and ") + " logged in"
+            active.isNotEmpty() -> active.all() + (if (active.size > 1) " are" else " is") + " using it" + also(locked + idle)
+            locked.isNotEmpty() -> "On, " + locked.all() + " logged in, screen locked" + also(idle)
+            idle.isNotEmpty() -> "On, " + idle.all() + " logged in"
             else -> "On, nobody logged in"
         }
     }
@@ -109,10 +141,12 @@ fun parseStatus(j: JSONObject): Status {
         name = j.optString("name").ifBlank { "Computer" },
         os = j.optString("os"),
         users = (0 until us.length()).mapNotNull { us.optJSONObject(it) }.filter { it.optString("name").isNotEmpty() }.map {
-            UserInfo(it.optString("name"), it.optString("full"), it.optBoolean("admin"), UserState.of(it.optString("state")))
+            UserInfo(it.optString("name"), it.optString("full"), it.optBoolean("admin"), UserState.of(it.optString("state")),
+                it.optString("net") == "off", it.optJSONObject("net_timer")?.optInt("remaining"))
         },
         timerSeconds = t?.optInt("remaining"),
         warn = t?.optBoolean("warn") ?: false,
+        caps = (j.optJSONArray("caps") ?: JSONArray()).let { c -> (0 until c.length()).map { c.optString(it) }.toSet() },
     )
 }
 
@@ -126,9 +160,9 @@ fun parseApps(j: JSONObject): List<AppInfo> {
 /** How the phone currently sees a computer. */
 enum class Link { CHECKING, ON, OFF, NOT_RUNNING, NO_WIFI, OTHER_WIFI, NOT_RECOGNISED }
 
-fun cardLine(link: Link, status: Status?): String = when (link) {
+fun cardLine(link: Link, status: Status?, nameOf: (UserInfo) -> String = { it.display }): String = when (link) {
     Link.CHECKING -> "Checking…"
-    Link.ON -> status?.headline() ?: "On"
+    Link.ON -> status?.headline(nameOf) ?: "On"
     Link.OFF -> "Off"
     Link.NOT_RUNNING -> "On, but Curfew is not running on it"
     Link.NO_WIFI -> "This phone is not on Wi-Fi"
@@ -137,7 +171,7 @@ fun cardLine(link: Link, status: Status?): String = when (link) {
 }
 
 fun linkExplanation(link: Link): String = when (link) {
-    Link.OFF -> "The computer is switched off, asleep or not connected to the Wi-Fi. This page updates by itself when it comes back."
+    Link.OFF -> "The computer is shut down, asleep or not connected to the Wi-Fi. This page updates by itself when it comes back."
     Link.NOT_RUNNING -> "The computer is on, but the Curfew service on it is not answering. Restarting the computer usually fixes it."
     Link.NO_WIFI -> "Curfew only works over the home Wi-Fi. Turn Wi-Fi on to see and control this computer."
     Link.OTHER_WIFI -> "This phone is connected to a different network. Curfew works only when the phone and the computer are on the same home Wi-Fi."
@@ -181,6 +215,23 @@ fun formatMinutes(m: Int): String = when {
     else -> "${m / 60} h ${m % 60} min"
 }
 
+/** A countdown length as offered to the parent: "30 s", "45 min", "1 h 30 min". */
+fun formatLength(seconds: Int): String = if (seconds < 60) "$seconds s" else formatMinutes(seconds / 60)
+
+/** The shortest and longest countdown the app offers.
+ *  TESTING VALUE: 15 seconds, so a timer can be tried without waiting. For the final app set
+ *  TIMER_MIN_SECONDS to 5 * 60; the choices below follow from these two numbers. */
+const val TIMER_MIN_SECONDS = 15
+const val TIMER_MAX_SECONDS = 6 * 3600
+
+/** The stops of the custom slider: seconds, then single minutes, then 5 and 15 minute steps. */
+fun timerSteps(min: Int = TIMER_MIN_SECONDS, max: Int = TIMER_MAX_SECONDS): List<Int> =
+    (listOf(15, 30) + (1..5).map { it * 60 } + (2..12).map { it * 300 } + (5..24).map { it * 900 }).filter { it in min..max }
+
+/** The one-tap choices. While testing, the shortest length is one of them. */
+fun timerPresets(min: Int = TIMER_MIN_SECONDS): List<Int> =
+    (listOfNotNull(min.takeIf { it < 300 }) + listOf(15, 30, 45, 60).map { it * 60 }).filter { it >= min }
+
 fun formatAge(seconds: Long): String = when {
     seconds < 90 -> "Opened just now"
     seconds < 3600 -> "Opened ${seconds / 60} min ago"
@@ -191,5 +242,8 @@ fun formatAge(seconds: Long): String = when {
 fun errorText(error: String): String = when (error) {
     "not_logged_in" -> "That account is not logged in"
     "bad_user" -> "That account no longer exists"
+    "is_admin" -> "The internet is never turned off for an admin account"
+    "unsupported" -> "That computer cannot do this"
+    "bad_op", "bad_args" -> "Curfew on that computer is too old for this. Run “sudo ./install.sh” on it again."
     else -> "The computer could not do that"
 }

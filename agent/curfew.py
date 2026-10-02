@@ -3,7 +3,9 @@
 
 One file, standard library only, Python 3.10+. It is both the root daemon
 ("curfew serve", started by systemd) and the admin command ("sudo curfew pair",
-"sudo curfew phones", "sudo curfew unpair NAME", "curfew status").
+"sudo curfew phones", "sudo curfew unpair NAME", "curfew status"), and the
+helper that the login screen asks about a login approved from a phone
+("curfew pam-login", see install.sh).
 
 It performs only the fixed actions in OPS below; there is no way to make it run
 an arbitrary command. The wire protocol is described in API.md.
@@ -19,6 +21,7 @@ import os
 import pwd
 import re
 import secrets
+import shutil
 import socket
 import subprocess
 import sys
@@ -29,10 +32,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 PROTO = 1
 PORT = 787                      # below 1024: a standard user cannot bind it
 STATE_DIR = "/var/lib/curfew"
+RUN_DIR = "/run/curfew"         # gone after a restart: approved logins
 DRY = False                     # dry-run: log "would ..." instead of acting
 PAIR_SECONDS = 120
 PAIR_MAX_FAILS = 5
 NONCE_SECONDS = 60
+NONCES_PER_ADDRESS = 32         # so one address cannot push out another's nonces
+CONNECTIONS_PER_ADDRESS = 8
+LOGIN_SECONDS = 120             # how long an approved login waits to be used
+PAM_FILE = "/etc/pam.d/gdm-password"
+FW_CHAIN = "CURFEW"
 MAX_BODY = 16384
 CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # no 0/O/1/I
 TOKEN_RE = re.compile(r"^[A-Za-z0-9]{8,64}$")
@@ -59,7 +68,7 @@ def state(write=False):
             st, write = {}, True
         if "id" not in st:
             st["id"], write = secrets.token_hex(8), True
-        for k in ("phones", "removed"):
+        for k in ("phones", "removed", "net"):
             st.setdefault(k, {})
         for k in ("pairing", "timer"):
             st.setdefault(k, None)
@@ -96,19 +105,22 @@ class Nonces:
     def __init__(self):
         self.live, self.lock = {}, threading.Lock()
 
-    def new(self):
+    def new(self, who=""):
         n, now = secrets.token_hex(16), time.monotonic()
         with self.lock:
-            for k in [k for k, exp in self.live.items() if exp < now]:
+            for k in [k for k, (exp, _) in self.live.items() if exp < now]:
                 del self.live[k]
-            while len(self.live) >= 1024:
+            mine = [k for k, (_, w) in self.live.items() if w == who]
+            for k in mine[:max(0, len(mine) - NONCES_PER_ADDRESS + 1)]:
+                del self.live[k]            # oldest first: dicts keep insertion order
+            while len(self.live) >= 4096:
                 del self.live[next(iter(self.live))]
-            self.live[n] = now + NONCE_SECONDS
+            self.live[n] = (now + NONCE_SECONDS, who)
         return n
 
     def use(self, n):
         with self.lock:
-            exp = self.live.pop(n, None)
+            exp, _ = self.live.pop(n, (None, None))
         return exp is not None and exp >= time.monotonic()
 
 
@@ -234,6 +246,8 @@ def desktop_index(home):
             name = exe = None
             hidden = False
             try:
+                if not os.path.isfile(path) or os.path.getsize(path) > 1 << 20:
+                    continue        # the user's own folder: no pipes, devices or huge files
                 with open(path, errors="replace") as f:
                     section = ""
                     for ln in f:
@@ -409,9 +423,19 @@ def power(kind):
         act("power off", ["systemctl", "poweroff", "-i"])
 
 
-def notify_all(text):
+def human(seconds):
+    """'30 seconds', '15 minutes', '1 hour 30 minutes'."""
+    if seconds < 60:
+        return "%d seconds" % seconds
+    h, m = divmod(round(seconds / 60), 60)
+    parts = ["%d %s%s" % (n, word, "" if n == 1 else "s") for n, word in ((h, "hour"), (m, "minute")) if n]
+    return " ".join(parts)
+
+
+def notify(text, only=None):
+    """Show a notice to everyone with a desktop session, or to one user."""
     for s in sessions():
-        if s["graphical"]:
+        if s["graphical"] and only in (None, s["user"]):
             with contextlib.suppress(KeyError):
                 uid = pwd.getpwnam(s["user"]).pw_uid
                 act("notify %s: %s" % (s["user"], text),
@@ -420,37 +444,119 @@ def notify_all(text):
                      "notify-send", "-u", "critical", "-a", "Curfew", "Curfew", text])
 
 
+# ------------------------------------------------------ internet per account
+
+def fw_rules(uid):
+    """Nothing leaves the computer for this account, and no name lookups either
+    (those go through a local resolver, which would otherwise stay reachable)."""
+    who = ["-m", "owner", "--uid-owner", str(uid)]
+    return [who + ["-p", "udp", "--dport", "53", "-j", "REJECT"],
+            who + ["-p", "tcp", "--dport", "53", "-j", "REJECT", "--reject-with", "tcp-reset"],
+            who + ["!", "-o", "lo", "-p", "tcp", "-j", "REJECT", "--reject-with", "tcp-reset"],
+            who + ["!", "-o", "lo", "-j", "REJECT"]]
+
+
+def net_supported():
+    return DRY or bool(shutil.which("iptables"))
+
+
+def net_sync():
+    """Make the firewall match the state file. Admin accounts are never blocked.
+    A computer where this was never used keeps an untouched firewall."""
+    with state() as st:
+        pass
+    off = {n for n, e in st["net"].items() if e.get("blocked")}
+    users = [u for u in human_users() if u["name"] in off and not u["admin"]]
+    if DRY:
+        log("would block the internet for: " + (", ".join(u["name"] for u in users) or "nobody"))
+        return True
+    ok = True
+    try:
+        for tool in ("iptables", "ip6tables"):
+            if not shutil.which(tool):
+                ok = ok and tool != "iptables"
+                continue
+            ipt = lambda *a: subprocess.run([tool, "-w", "5", *a], capture_output=True, text=True, timeout=15)
+            have = ipt("-S", FW_CHAIN)
+            if have.returncode != 0 and not users:
+                continue
+            want = sorted(str(u["uid"]) for u in users for _ in fw_rules(u["uid"]))
+            first = [ln for ln in ipt("-S", "OUTPUT").stdout.splitlines() if ln.startswith("-A ")][:1]
+            if (have.returncode == 0 and first == ["-A OUTPUT -j " + FW_CHAIN]
+                    and sorted(re.findall(r"--uid-owner (\d+)", have.stdout)) == want):
+                continue
+            log("updating %s: internet off for %s" % (tool, ", ".join(u["name"] for u in users) or "nobody"))
+            ipt("-N", FW_CHAIN)
+            ipt("-F", FW_CHAIN)
+            done = [ipt("-A", FW_CHAIN, *r).returncode == 0 for u in users for r in fw_rules(u["uid"])]
+            while ipt("-D", "OUTPUT", "-j", FW_CHAIN).returncode == 0:
+                pass
+            done.append(ipt("-I", "OUTPUT", "1", "-j", FW_CHAIN).returncode == 0)   # ahead of any other rule
+            ok = ok and all(done)
+    except (OSError, subprocess.SubprocessError) as e:
+        log("firewall error: %r" % e)
+        return False
+    return ok
+
+
+# -------------------------------------------------------------------- timers
+
 TIMER_WAKE = threading.Event()
 
 
+def due(e, now):
+    """What a countdown needs right now: 'fire', 'warn' or None."""
+    if not e or e.get("deadline") is None:
+        return None
+    left = e["deadline"] - now
+    if left <= 0:
+        return "fire"
+    return "warn" if e.get("warn") and not e.get("warned") and left <= 60 else None
+
+
 def timer_loop():
-    """Owns the power-off countdown. The deadline is a wall-clock time in the
-    state file, so it survives a restart of the agent and a reboot."""
+    """Owns the shut-down countdown and the internet countdowns. The deadlines are
+    wall-clock times in the state file, so they survive a restart of the agent
+    and a reboot. Also puts the firewall back if something else cleared it."""
+    checked = None
     while True:
-        fire = warn = False
         with state() as st:
-            t = st["timer"]
-        wait = 30.0
-        if t:
-            left = t["deadline"] - time.time()
-            if left <= 0:
-                fire = True
-            else:
-                warn = t.get("warn") and not t.get("warned") and left <= 60
-                wait = min(left, 5.0)       # short ticks also catch waking from suspend
-        if fire or warn:
-            with state(write=True) as st:
-                if st["timer"] and fire:
+            pass
+        now = time.time()
+        entries = [st["timer"]] + list(st["net"].values())
+        if any(due(e, now) for e in entries):
+            todo = []
+            with state(write=True) as st:       # decide again under the lock: it may just have been cancelled
+                what = due(st["timer"], now)
+                if what == "fire":
                     st["timer"] = None
-                elif st["timer"]:
+                    todo.append(("power", None))
+                elif what:
                     st["timer"]["warned"] = True
-            if fire:
+                    todo.append(("notify", None, "This computer will shut down in 1 minute."))
+                for name, e in st["net"].items():
+                    what = due(e, now)
+                    if what == "fire":
+                        e.update(blocked=True, deadline=None)
+                        todo.append(("net", name, e.get("warn")))
+                    elif what:
+                        e["warned"] = True
+                        todo.append(("notify", name, "The internet will turn off in 1 minute."))
+            if any(t[0] == "net" for t in todo):
+                net_sync()
+            for t in todo:
+                if t[0] == "notify" or (t[0] == "net" and t[2]):
+                    notify(t[2] if t[0] == "notify" else "The internet has been turned off.", t[1])
+            if any(t[0] == "power" for t in todo):
                 log("timer reached zero")
                 power("poweroff")
-            else:
-                notify_all("This computer will switch off in 1 minute.")
             continue
-        TIMER_WAKE.wait(wait)
+        blocking = any(e.get("blocked") for e in st["net"].values())
+        if checked is None or (blocking and time.monotonic() - checked >= 30):
+            net_sync()
+            checked = time.monotonic()
+        lefts = [e["deadline"] - now for e in entries if e and e.get("deadline") is not None]
+        TIMER_WAKE.wait(min(lefts + [5.0]) if lefts else 30.0)   # short ticks also catch waking from suspend
         TIMER_WAKE.clear()
 
 
@@ -468,16 +574,37 @@ def host_name():
     return (demo() or {}).get("name") or socket.gethostname()
 
 
-def op_status(req, st):
-    states = user_states()
-    users = [{"name": u["name"], "full": u["full"], "admin": u["admin"],
-              "state": states.get(u["name"], "none")} for u in human_users()]
+def login_hook():
+    """Is the login screen set up (by install.sh) to ask us about approved logins?"""
+    if DRY:
+        return True
+    with contextlib.suppress(OSError):
+        with open(PAM_FILE) as f:
+            return "curfew.py pam-login" in f.read()
+    return False
+
+
+def all_users():
+    """Every account with its state, as the phone sees it."""
     if demo():
-        users = demo()["users"]
+        return [dict(u) for u in demo()["users"]]
+    states = user_states()
+    return [{"name": u["name"], "full": u["full"], "admin": u["admin"],
+             "state": states.get(u["name"], "none")} for u in human_users()]
+
+
+def op_status(req, st):
+    now, users = time.time(), all_users()
+    for u in users:
+        e = st["net"].get(u["name"]) or {}
+        u["net"] = "off" if e.get("blocked") and not u["admin"] else "on"
+        if e.get("deadline") is not None and not u["admin"]:
+            u["net_timer"] = {"remaining": max(0, int(e["deadline"] - now)), "warn": bool(e.get("warn"))}
     t = st["timer"]
-    timer = {"remaining": max(0, int(t["deadline"] - time.time())), "warn": bool(t.get("warn"))} if t else None
+    timer = {"remaining": max(0, int(t["deadline"] - now)), "warn": bool(t.get("warn"))} if t else None
+    caps = ["seconds"] + (["net"] if net_supported() else []) + (["login"] if login_hook() else [])
     return {"ok": True, "id": st["id"], "name": host_name(), "os": os_name(),
-            "users": users, "timer": timer, "dry": DRY}
+            "users": users, "timer": timer, "caps": caps, "dry": DRY}
 
 
 def find_user(req):
@@ -493,23 +620,34 @@ def op_apps(req, st):
     return {"ok": True, "apps": open_apps(u)} if u else {"ok": False, "error": "bad_user"}
 
 
+def countdown(req, low=10):
+    """The length asked for, in seconds, or None if it is not acceptable.
+    'seconds' is preferred; 'minutes' is what older phones send."""
+    n = req.get("seconds")
+    if n is None and isinstance(req.get("minutes"), int) and not isinstance(req.get("minutes"), bool):
+        n = req["minutes"] * 60
+    if not isinstance(n, int) or isinstance(n, bool) or not low <= n <= 86400:
+        return None
+    return n
+
+
 def op_power(req, st):
     threading.Timer(1.0, power, [req["op"]]).start()     # after the reply is sent
     return {"ok": True}
 
 
 def op_timer_set(req, st):
-    minutes, warn = req.get("minutes"), bool(req.get("warn"))
-    if not isinstance(minutes, int) or isinstance(minutes, bool) or not 1 <= minutes <= 1440:
+    seconds, warn = countdown(req), bool(req.get("warn"))
+    if seconds is None:
         return {"ok": False, "error": "bad_args"}
     with state(write=True) as s:
-        s["timer"] = {"deadline": time.time() + minutes * 60, "warn": warn, "warned": minutes <= 1}
-    log("timer set: power off in %d min" % minutes)
+        s["timer"] = {"deadline": time.time() + seconds, "warn": warn, "warned": seconds <= 60}
+    log("timer set: shut down in %s" % human(seconds))
     TIMER_WAKE.set()
     if warn:
-        threading.Thread(target=notify_all, daemon=True, args=(
-            "This computer will switch off in %d minute%s." % (minutes, "" if minutes == 1 else "s"),)).start()
-    return {"ok": True, "timer": {"remaining": minutes * 60, "warn": warn}}
+        threading.Thread(target=notify, daemon=True, args=(
+            "This computer will shut down in %s." % human(seconds),)).start()
+    return {"ok": True, "timer": {"remaining": seconds, "warn": warn}}
 
 
 def op_timer_cancel(req, st):
@@ -536,6 +674,7 @@ def op_lock(req, st):
     u = find_user(req)
     if not u:
         return {"ok": False, "error": "bad_user"}
+    revoke_login(u["name"])
     ids = [s["id"] for s in sessions() if s["user"] == u["name"] and s["graphical"]]
     ok = bool(ids) and all([act("lock the screen of " + u["name"], ["loginctl", "lock-session", i]) for i in ids])
     return {"ok": True} if ok else {"ok": False, "error": "not_logged_in" if not ids else "failed"}
@@ -547,9 +686,114 @@ def op_logout(req, st):
     u = find_user(req)
     if not u:
         return {"ok": False, "error": "bad_user"}
+    revoke_login(u["name"])
     if not any(s["user"] == u["name"] for s in sessions()):
         return {"ok": False, "error": "not_logged_in"}
     ok = act("log out " + u["name"], ["loginctl", "terminate-user", u["name"]])
+    return {"ok": True} if ok else {"ok": False, "error": "failed"}
+
+
+def login_path(name):
+    return os.path.join(RUN_DIR, "login", name)
+
+
+def revoke_login(name):
+    with contextlib.suppress(OSError):
+        os.unlink(login_path(name))
+
+
+def op_login(req, st):
+    """Let an account in without its password being typed. A session that is
+    already open is brought to the screen and unlocked. Otherwise the login
+    screen is told to accept this account once, within LOGIN_SECONDS (it asks
+    'curfew pam-login', below)."""
+    u = next((u for u in all_users() if u["name"] == req.get("user")), None)
+    if not u:
+        return {"ok": False, "error": "bad_user"}
+    name = u["name"]
+    if demo():
+        log("would log in " + name)
+        return {"ok": True, "how": "approved" if u["state"] == "none" else "unlocked", "seconds": LOGIN_SECONDS}
+    live = sessions()
+    mine = [s["id"] for s in live if s["user"] == name and s["graphical"]]
+    hook = login_hook()
+    if not mine and not hook:
+        return {"ok": False, "error": "unsupported"}
+    if hook:
+        os.makedirs(os.path.dirname(login_path(name)), mode=0o700, exist_ok=True)
+        with open(login_path(name), "w") as f:
+            f.write(str(time.time() + LOGIN_SECONDS))
+        log("login approved for %s by phone %r" % (name, st["phones"].get(req["_phone"], {}).get("name")))
+    if not mine:
+        return {"ok": True, "how": "approved", "seconds": LOGIN_SECONDS}
+    for s in live:                      # nobody else's open session is left behind unlocked
+        if s["graphical"] and s["user"] != name:
+            act("lock the screen of " + s["user"], ["loginctl", "lock-session", s["id"]])
+    ok = (act("bring the session of %s to the screen" % name, ["loginctl", "activate", mine[0]])
+          and act("unlock the screen of " + name, ["loginctl", "unlock-session", mine[0]]))
+    return {"ok": True, "how": "unlocked", "seconds": LOGIN_SECONDS} if ok else {"ok": False, "error": "failed"}
+
+
+def cmd_pam_login():
+    """Run by the login screen for the account in $PAM_USER before it asks for the
+    password. Exit status 0 means: a phone approved this login, let them in.
+    Each approval works once."""
+    name = os.environ.get("PAM_USER", "")
+    if os.environ.get("PAM_TYPE") != "auth" or not find_user({"user": name}):
+        return 1
+    try:
+        with open(login_path(name)) as f:
+            expires = float(f.read())
+        os.unlink(login_path(name))
+    except (OSError, ValueError):
+        return 1
+    if expires < time.time():
+        return 1
+    log("let %s in without a password (approved from a phone)" % name)
+    return 0
+
+
+def op_net_set(req, st):
+    """Turn the internet off for one account: now (seconds 0) or after a countdown."""
+    u = next((u for u in all_users() if u["name"] == req.get("user")), None)
+    seconds, warn = countdown(req, low=0), bool(req.get("warn"))
+    if not u:
+        return {"ok": False, "error": "bad_user"}
+    if u["admin"]:
+        return {"ok": False, "error": "is_admin"}
+    if seconds is None or 0 < seconds < 10:
+        return {"ok": False, "error": "bad_args"}
+    if not net_supported():
+        return {"ok": False, "error": "unsupported"}
+    with state(write=True) as s:
+        old = s["net"].get(u["name"])
+        s["net"][u["name"]] = {"blocked": seconds == 0, "deadline": time.time() + seconds if seconds else None,
+                               "warn": warn, "warned": seconds <= 60}
+    if not net_sync():
+        with state(write=True) as s:    # say so, and do not pretend it is off
+            if old is None:
+                s["net"].pop(u["name"], None)
+            else:
+                s["net"][u["name"]] = old
+        net_sync()
+        return {"ok": False, "error": "failed"}
+    log("internet for %s: off %s" % (u["name"], "in " + human(seconds) if seconds else "now"))
+    TIMER_WAKE.set()
+    if warn:
+        text = "The internet will turn off in %s." % human(seconds) if seconds else "The internet has been turned off."
+        threading.Thread(target=notify, daemon=True, args=(text, u["name"])).start()
+    return {"ok": True}
+
+
+def op_net_clear(req, st):
+    """Internet back on for one account, and any countdown for it cancelled."""
+    if not any(u["name"] == req.get("user") for u in all_users()):
+        return {"ok": False, "error": "bad_user"}
+    with state(write=True) as s:
+        s["net"].pop(req["user"], None)
+    ok = net_sync()
+    log("internet for %s: on" % req["user"])
+    TIMER_WAKE.set()
     return {"ok": True} if ok else {"ok": False, "error": "failed"}
 
 
@@ -562,7 +806,8 @@ def op_forget(req, st):
 
 OPS = {"status": op_status, "apps": op_apps, "poweroff": op_power, "reboot": op_power,
        "timer_set": op_timer_set, "timer_cancel": op_timer_cancel, "lock": op_lock,
-       "logout": op_logout, "forget": op_forget}
+       "logout": op_logout, "login": op_login, "net_set": op_net_set, "net_clear": op_net_clear,
+       "forget": op_forget}
 
 
 # ---------------------------------------------------------------------- HTTP
@@ -658,7 +903,7 @@ class Handler(BaseHTTPRequestHandler):
         with state() as st:
             pass
         self.reply(200, {"app": "curfew", "proto": PROTO, "id": st["id"],
-                         "name": host_name(), "nonce": NONCES.new()})
+                         "name": host_name(), "nonce": NONCES.new(self.client_address[0])})
 
     def do_POST(self):
         fn = {"/v1/pair": handle_pair, "/v1/call": handle_call}.get(self.path)
@@ -677,7 +922,29 @@ class Handler(BaseHTTPRequestHandler):
 
 
 class Server(ThreadingHTTPServer):
+    """Serves a few connections per address at a time, so that someone flooding it
+    from one place (an account on this computer, say) cannot keep the phone out."""
     daemon_threads, allow_reuse_address, request_queue_size = True, True, 32
+    busy, busy_lock = {}, threading.Lock()
+
+    def verify_request(self, request, client_address):
+        ip = client_address[0]
+        with self.busy_lock:
+            if self.busy.get(ip, 0) >= CONNECTIONS_PER_ADDRESS:
+                return False
+            self.busy[ip] = self.busy.get(ip, 0) + 1
+        return True
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            with self.busy_lock:
+                left = self.busy.get(client_address[0], 1) - 1
+                if left > 0:
+                    self.busy[client_address[0]] = left
+                else:
+                    self.busy.pop(client_address[0], None)
 
 
 def serve():
@@ -911,9 +1178,15 @@ def cmd_status():
         st["id"], s["name"], s["os"], PORT, "running" if agent_running() else "NOT running"))
     print("Paired phones: %d" % len(st["phones"]))
     t = s["timer"]
-    print("Power-off timer: " + ("%d min %02d s left" % divmod(t["remaining"], 60) if t else "none"))
+    print("Shut-down timer: " + ("%d min %02d s left" % divmod(t["remaining"], 60) if t else "none"))
+    print("Login from the phone: " + ("ready" if login_hook() else "not set up (needs the GNOME login screen)"))
+    locked = any(os.path.exists(p) for p in ("/etc/polkit-1/rules.d/10-curfew-network.rules",
+                                             "/etc/polkit-1/localauthority/50-local.d/curfew-network.pkla"))
+    print("Changing the network: " + ("administrators only" if locked else "anyone"))
     for u in s["users"]:
-        print("  %-20s %-9s %s" % (u["name"], "admin" if u["admin"] else "standard", u["state"].replace("_", " ")))
+        nt = u.get("net_timer")
+        net = "internet off" if u["net"] == "off" else "internet off in %d min %02d s" % divmod(nt["remaining"], 60) if nt else ""
+        print("  %-20s %-9s %-10s %s" % (u["name"], "admin" if u["admin"] else "standard", u["state"].replace("_", " "), net))
     return 0
 
 
@@ -927,11 +1200,12 @@ USAGE = """Curfew - control this computer from a paired phone.
 
 
 def main(argv):
-    global DRY, PORT, STATE_DIR
+    global DRY, PORT, STATE_DIR, RUN_DIR
     args = [a for a in argv if a != "--dry-run"]
     if len(args) != len(argv) or os.environ.get("CURFEW_DRY") == "1":
         DRY, PORT = True, int(os.environ.get("CURFEW_PORT", "8787"))
         STATE_DIR = os.environ.get("CURFEW_STATE") or os.path.expanduser("~/.local/state/curfew-dryrun")
+        RUN_DIR = os.path.join(STATE_DIR, "run")
     os.umask(0o077)
     cmd = args[0] if args else "help"
     if cmd in ("help", "-h", "--help"):
@@ -942,6 +1216,8 @@ def main(argv):
         return 1
     if cmd == "serve":
         return serve()
+    if cmd == "pam-login":
+        return cmd_pam_login()
     if cmd == "id":
         with state() as st:
             print(st["id"])
