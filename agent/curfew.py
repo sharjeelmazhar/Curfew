@@ -438,8 +438,9 @@ def open_apps(user):
 # open right now. Private/incognito windows write nothing to disk, so they
 # never show up here. See API.md for the shape sent to the phone.
 
-RECENT_LIMIT = 15               # history rows kept per browser
-OPEN_WINDOW = 180               # Chrome has no readable tab list; "open now" is the last 3 minutes
+HISTORY_DAYS = 7                # how far back the history goes
+HISTORY_MAX = 1000              # a safety cap on rows per browser, so a huge history cannot flood the phone
+OPEN_WINDOW = 90                # Chrome has no readable tab list; "open now" is the last 90 seconds of history
 SEARCH_HOSTS = ("google.", "bing.", "duckduckgo.", "search.brave.", "ecosia.", "startpage.")
 
 # Each browser: where its profiles live under the account's home, and how to read them.
@@ -522,7 +523,7 @@ def _mozlz4(path):
         return None
 
 
-def _snapshot_rows(db, sql):
+def _snapshot_rows(db, sql, params=()):
     """Run a read-only query against a copy of a browser database, so it works
     even while the browser holds the original open. Returns [] on any trouble."""
     tmp = tempfile.mkdtemp(prefix="curfew-br-")
@@ -540,7 +541,7 @@ def _snapshot_rows(db, sql):
             return []
         conn = sqlite3.connect(base, timeout=3)
         try:
-            return conn.execute(sql).fetchall()
+            return conn.execute(sql, params).fetchall()
         finally:
             conn.close()
     except sqlite3.Error:
@@ -571,9 +572,10 @@ def _newest_profile(home, spec):
 
 
 def _firefox(profile, db):
+    since = int((time.time() - HISTORY_DAYS * 86400) * 1_000_000)   # microseconds since the epoch
     rows = _snapshot_rows(db, "select url, title, last_visit_date from moz_places "
-                              "where last_visit_date is not null and hidden = 0 "
-                              "order by last_visit_date desc limit 200")
+                              "where last_visit_date is not null and hidden = 0 and last_visit_date >= ? "
+                              "order by last_visit_date desc limit ?", (since, HISTORY_MAX))
     recent = [_entry(u, t, (d or 0) / 1_000_000) for u, t, d in rows if _host(u)]
     tabs = []
     for name in ("sessionstore-backups/recovery.jsonlz4", "sessionstore-backups/recovery.baklz4",
@@ -595,12 +597,13 @@ def _firefox(profile, db):
 
 
 def _chromium(profile, db):
+    since = int((time.time() - HISTORY_DAYS * 86400 + 11644473600) * 1_000_000)   # Chrome counts microseconds from 1601
     rows = _snapshot_rows(db, "select u.url, u.title, u.last_visit_time, k.term "
                               "from urls u left join keyword_search_terms k on k.url_id = u.id "
-                              "where u.last_visit_time > 0 order by u.last_visit_time desc limit 200")
+                              "where u.last_visit_time >= ? order by u.last_visit_time desc limit ?", (since, HISTORY_MAX))
     recent = [_entry(u, t, v / 1_000_000 - 11644473600, s or "") for u, t, v, s in rows if _host(u)]
     now = time.time()
-    tabs = [e for e in recent if now - e["when"] < OPEN_WINDOW]     # no readable tab list; the last few minutes stand in
+    tabs = [e for e in recent if now - e["when"] < OPEN_WINDOW]     # no readable tab list; the last minute or two stand in
     return tabs, recent
 
 
@@ -633,7 +636,7 @@ def browser_activity(user):
         if not tabs and not recent:
             continue
         out.append({"id": spec["id"], "name": spec["name"],
-                    "open": _dedupe(tabs)[:40], "recent": _dedupe(recent)[:RECENT_LIMIT]})
+                    "open": _dedupe(tabs)[:60], "recent": _dedupe(recent)[:HISTORY_MAX]})
     return out
 
 
