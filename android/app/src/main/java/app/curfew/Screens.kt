@@ -1,6 +1,7 @@
 package app.curfew
 
 import android.os.SystemClock
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -681,7 +682,9 @@ private fun Note(text: String) {
 private fun AppRow(a: AppInfo) {
     val scheme = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(
+        val logo = logoFor(a.name)
+        if (logo != null) Image(painterResource(logo), null, Modifier.size(44.dp))
+        else Box(
             Modifier.size(44.dp).clip(CircleShape).background(if (a.terminal) scheme.tertiaryContainer else scheme.secondaryContainer),
             contentAlignment = Alignment.Center,
         ) {
@@ -722,7 +725,9 @@ private fun BrowserRow(b: BrowserInfo, onClick: () -> Unit) {
         Modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium).clickable(onClick = onClick).padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.size(44.dp).clip(CircleShape).background(scheme.secondaryContainer), contentAlignment = Alignment.Center) {
+        val logo = logoFor(b.name)
+        if (logo != null) Image(painterResource(logo), null, Modifier.size(44.dp))
+        else Box(Modifier.size(44.dp).clip(CircleShape).background(scheme.secondaryContainer), contentAlignment = Alignment.Center) {
             Icon(Icons.Rounded.Language, null, Modifier.size(24.dp), tint = scheme.onSecondaryContainer)
         }
         Spacer(Modifier.width(12.dp))

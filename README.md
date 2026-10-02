@@ -9,7 +9,7 @@ From the phone you can:
 - lock someone's screen or log them out
 - log someone in without typing their password in front of them
 - turn the internet off for one account, now or after a countdown, while the computer stays on
-- see what each person has open, including programs started from a terminal
+- see what each person has open, including programs started from a terminal (common apps like Chrome, Firefox, Discord, Minecraft and Spotify show their own logo)
 - see which websites each person has visited, and what they searched for, in each browser
 
 It works whoever is logged in on the laptop, and also when nobody is logged in yet.

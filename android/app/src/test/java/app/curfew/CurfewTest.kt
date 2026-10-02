@@ -374,6 +374,23 @@ class CurfewTest {
         assertTrue(search.matches("goog"))             // host
     }
 
+    @Test fun logosByName() {
+        assertEquals("chrome", logoKey("Google Chrome"))
+        assertEquals("chromium", logoKey("Chromium Web Browser"))
+        assertEquals("firefox", logoKey("Firefox Web Browser"))
+        assertEquals("minecraft", logoKey("Minecraft"))
+        assertEquals("discord", logoKey("Discord"))
+        assertEquals("teams", logoKey("Teams for Linux"))
+        assertEquals("vscode", logoKey("Visual Studio Code"))
+        assertEquals("libreoffice_writer", logoKey("LibreOffice Writer"))
+        assertEquals("edge", logoKey("Microsoft Edge"))
+        assertEquals("epiphany", logoKey("Web"))
+        assertEquals("gimp", logoKey("GNU Image Manipulation Program"))
+        assertNull(logoKey("Knowledge Base"))           // "edge" only as a whole word
+        assertNull(logoKey("Terminal"))
+        assertNull(logoKey("calculator.py (Python)"))
+    }
+
     @Test fun whenInWords() {
         val now = 1_000_000L
         assertEquals("Just now", formatWhen(now - 30, now))
