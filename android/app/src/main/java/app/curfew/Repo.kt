@@ -361,6 +361,15 @@ class Repo(private val app: Context) {
         }
     }
 
+    /** Screen time of every account, or null if the computer could not be asked. */
+    suspend fun usage(id: String): Usage? = withContext(Dispatchers.IO) {
+        val c = _store.value.computers.find { it.id == id } ?: return@withContext null
+        serial(id) {
+            val (reply, ep) = reach(c, JSONObject().put("op", "usage"))
+            absorb(c, reply, ep)?.let(::parseUsage)
+        }
+    }
+
     suspend fun pair(link: PairLink): PairResult = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
         val r = client.pair(link, phoneName, now)

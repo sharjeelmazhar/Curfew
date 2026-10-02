@@ -11,6 +11,7 @@ It performs only the fixed actions in OPS below; there is no way to make it run
 an arbitrary command. The wire protocol is described in API.md.
 """
 import contextlib
+import datetime
 import fcntl
 import glob
 import grp
@@ -22,6 +23,7 @@ import pwd
 import re
 import secrets
 import shutil
+import signal
 import socket
 import sqlite3
 import struct
@@ -174,7 +176,7 @@ def sessions():
     if not ids:
         return []
     out = run(["loginctl", "show-session", "-p", "Id", "-p", "Name", "-p", "Class", "-p", "Type",
-               "-p", "Active", "-p", "State", "-p", "LockedHint", "-p", "Remote"] + ids)
+               "-p", "Active", "-p", "State", "-p", "LockedHint", "-p", "Remote", "-p", "Timestamp"] + ids)
     res = []
     for block in out.split("\n\n"):
         s = dict(ln.split("=", 1) for ln in block.splitlines() if "=" in ln)
@@ -183,22 +185,31 @@ def sessions():
         res.append({"id": s.get("Id", ""), "user": s["Name"],
                     "graphical": s.get("Type") in ("x11", "wayland", "mir"),
                     "active": s.get("Active") == "yes" and s.get("Remote") != "yes",
-                    "locked": s.get("LockedHint") == "yes"})
+                    "locked": s.get("LockedHint") == "yes", "since": stamp(s.get("Timestamp", ""))})
     return res
+
+
+def stamp(text):
+    """logind's 'Fri 2026-10-02 20:48:33 PKT' as unix seconds, or None."""
+    m = re.search(r"(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d)", text)
+    return int(time.mktime(tuple(int(x) for x in m.groups()) + (0, 0, -1))) if m else None
 
 
 RANK = {"none": 0, "logged_in": 1, "locked": 2, "active": 3}
 
 
 def user_states():
-    states = {}
+    """Each logged-in account's state, and when its oldest session began."""
+    states, since = {}, {}
     for s in sessions():
         st = "logged_in"
         if s["active"]:
             st = "locked" if s["locked"] else "active"
         if RANK[st] > RANK[states.get(s["user"], "none")]:
             states[s["user"]] = st
-    return states
+        if s["since"]:
+            since[s["user"]] = min(s["since"], since.get(s["user"], s["since"]))
+    return states, since
 
 
 def os_name():
@@ -571,39 +582,61 @@ def _newest_profile(home, spec):
     return best and best[1:]
 
 
-def _firefox(profile, db):
+def _running(uid, needles):
+    """Is a program whose name contains one of [needles] running for this account?
+    Used so that "open now" is empty once the browser has been closed."""
+    for name in os.listdir("/proc"):
+        if not name.isdigit():
+            continue
+        try:
+            if os.stat("/proc/" + name).st_uid != uid:
+                continue
+            with open("/proc/" + name + "/comm") as f:
+                comm = f.read().strip().lower()
+        except OSError:
+            continue
+        if any(n in comm for n in needles):
+            return True
+    return False
+
+
+def _firefox(profile, db, uid):
     since = int((time.time() - HISTORY_DAYS * 86400) * 1_000_000)   # microseconds since the epoch
     rows = _snapshot_rows(db, "select url, title, last_visit_date from moz_places "
                               "where last_visit_date is not null and hidden = 0 and last_visit_date >= ? "
                               "order by last_visit_date desc limit ?", (since, HISTORY_MAX))
     recent = [_entry(u, t, (d or 0) / 1_000_000) for u, t, d in rows if _host(u)]
     tabs = []
-    for name in ("sessionstore-backups/recovery.jsonlz4", "sessionstore-backups/recovery.baklz4",
-                 "sessionstore-backups/previous.jsonlz4", "sessionstore.jsonlz4"):
-        data = _mozlz4(os.path.join(profile, name))
-        if not isinstance(data, dict):
-            continue
-        for win in data.get("windows", []):
-            for tab in win.get("tabs", []):
-                entries = tab.get("entries", [])
-                idx = tab.get("index", len(entries))
-                if entries and 1 <= idx <= len(entries):
-                    e = entries[idx - 1]
-                    url = e.get("url", "")
-                    if _host(url) and not url.startswith("about:"):
-                        tabs.append(_entry(url, e.get("title", ""), (tab.get("lastAccessed") or 0) / 1000))
-        break
+    # Only the live session file, and only while Firefox is actually running: previous.jsonlz4 and
+    # sessionstore.jsonlz4 are earlier sessions, not what is open now.
+    if _running(uid, ("firefox",)):
+        for name in ("sessionstore-backups/recovery.jsonlz4", "sessionstore-backups/recovery.baklz4"):
+            data = _mozlz4(os.path.join(profile, name))
+            if not isinstance(data, dict):
+                continue
+            for win in data.get("windows", []):
+                for tab in win.get("tabs", []):
+                    entries = tab.get("entries", [])
+                    idx = tab.get("index", len(entries))
+                    if entries and 1 <= idx <= len(entries):
+                        e = entries[idx - 1]
+                        url = e.get("url", "")
+                        if _host(url) and not url.startswith("about:"):
+                            tabs.append(_entry(url, e.get("title", ""), (tab.get("lastAccessed") or 0) / 1000))
+            break
+        tabs.sort(key=lambda e: -e["when"])     # the tab seen most recently first
     return tabs, recent
 
 
-def _chromium(profile, db):
+def _chromium(profile, db, uid):
     since = int((time.time() - HISTORY_DAYS * 86400 + 11644473600) * 1_000_000)   # Chrome counts microseconds from 1601
     rows = _snapshot_rows(db, "select u.url, u.title, u.last_visit_time, k.term "
                               "from urls u left join keyword_search_terms k on k.url_id = u.id "
                               "where u.last_visit_time >= ? order by u.last_visit_time desc limit ?", (since, HISTORY_MAX))
     recent = [_entry(u, t, v / 1_000_000 - 11644473600, s or "") for u, t, v, s in rows if _host(u)]
     now = time.time()
-    tabs = [e for e in recent if now - e["when"] < OPEN_WINDOW]     # no readable tab list; the last minute or two stand in
+    # No readable tab list; the last minute or two of history stands in, and only while it runs.
+    tabs = [e for e in recent if now - e["when"] < OPEN_WINDOW] if _running(uid, ("chrome", "chromium")) else []
     return tabs, recent
 
 
@@ -629,7 +662,7 @@ def browser_activity(user):
         profile, db = found
         reader = _firefox if spec["kind"] == "firefox" else _chromium
         try:
-            tabs, recent = reader(profile, db)
+            tabs, recent = reader(profile, db, user["uid"])
         except Exception as e:
             log("browser %s read failed: %r" % (spec["id"], e))
             tabs, recent = [], []
@@ -638,6 +671,120 @@ def browser_activity(user):
         out.append({"id": spec["id"], "name": spec["name"],
                     "open": _dedupe(tabs)[:60], "recent": _dedupe(recent)[:HISTORY_MAX]})
     return out
+
+
+# --------------------------------------------------------------- screen time
+
+USAGE_TICK = 15                 # seconds between looks at who is logged in
+USAGE_SAVE = 60                 # seconds between writes to disk
+USAGE_DAYS = 2                  # today and yesterday
+USAGE_LOGINS = 40               # logins remembered per account
+SEEN = {"lock": threading.Lock(), "data": None, "looked": None, "saved": 0.0, "dirty": False}
+
+
+def boot_id():
+    with contextlib.suppress(OSError):
+        with open("/proc/sys/kernel/random/boot_id") as f:
+            return f.read().strip()
+    return ""
+
+
+def boot_time():
+    with contextlib.suppress(OSError, ValueError):
+        with open("/proc/stat") as f:
+            return next(int(ln.split()[1]) for ln in f if ln.startswith("btime "))
+    return 0
+
+
+def kept_days(now):
+    """The dates that are remembered, today first, as '2026-10-02'."""
+    today = datetime.date.fromtimestamp(now)
+    return [(today - datetime.timedelta(days=i)).isoformat() for i in range(USAGE_DAYS)]
+
+
+def usage_step(d, users, now, dt):
+    """One look at the accounts. Adds dt seconds to everyone logged in ('on') and to whoever
+    is on the screen with it unlocked ('used'), and notes logins and logouts. A locked screen
+    and an account switched to the background are logged in but not in use."""
+    days = kept_days(now)
+    oldest = time.mktime(datetime.date.fromisoformat(days[-1]).timetuple())
+    for u in users:
+        if u["state"] == "none":
+            continue
+        e = d["users"].setdefault(u["name"], {"days": {}, "boot": {"used": 0, "on": 0}, "logins": []})
+        for row in (e["days"].setdefault(days[0], {"used": 0, "on": 0}), e["boot"]):
+            row["on"] = round(row["on"] + dt, 1)
+            if u["state"] == "active":
+                row["used"] = round(row["used"] + dt, 1)
+        if not e["logins"] or e["logins"][-1][1] is not None:
+            e["logins"].append([int(u.get("since") or now), None])
+    here = {u["name"] for u in users if u["state"] != "none"}
+    for name, e in d["users"].items():
+        if name not in here and e["logins"] and e["logins"][-1][1] is None:
+            e["logins"][-1][1] = int(now)
+        e["days"] = {k: v for k, v in e["days"].items() if k in days}
+        e["logins"] = [x for x in e["logins"] if x[1] is None or x[1] >= oldest][-USAGE_LOGINS:]
+    d["seen"] = int(now)
+
+
+def usage_load(now):
+    """The totals from disk. After a restart of the computer the 'since it was turned on'
+    totals start again, and logins that were open when it went down end where they were last seen."""
+    try:
+        with open(os.path.join(STATE_DIR, "usage.json")) as f:
+            d = json.load(f)
+        d["users"] = {k: v for k, v in d["users"].items() if {"days", "boot", "logins"} <= set(v)}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        d = {"users": {}}
+    if d.get("boot") != boot_id():
+        d["boot"] = boot_id()
+        for e in d["users"].values():
+            e["boot"] = {"used": 0, "on": 0}
+            if e["logins"] and e["logins"][-1][1] is None:
+                e["logins"][-1][1] = int(d.get("seen") or now)
+    return d
+
+
+def usage_save():
+    with SEEN["lock"]:
+        if not SEEN["dirty"]:
+            return
+        SEEN["dirty"], SEEN["saved"] = False, time.monotonic()
+        text = json.dumps(SEEN["data"])
+    with contextlib.suppress(OSError):
+        os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
+        path = os.path.join(STATE_DIR, "usage.json")
+        fd = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        os.replace(path + ".tmp", path)
+
+
+def usage_look(users=None):
+    """Bring the totals up to this moment. The time since the last look goes to whoever is
+    there now; it is measured on a clock that stands still while the computer sleeps."""
+    users = all_users() if users is None else users
+    with SEEN["lock"]:
+        now, tick = time.time(), time.monotonic()
+        if SEEN["data"] is None:
+            SEEN["data"] = usage_load(now)
+        dt = 0.0 if SEEN["looked"] is None else min(max(tick - SEEN["looked"], 0.0), 2.0 * USAGE_TICK)
+        SEEN["looked"] = tick
+        before = json.dumps(SEEN["data"]["users"], sort_keys=True)
+        usage_step(SEEN["data"], users, now, dt)
+        SEEN["dirty"] = SEEN["dirty"] or json.dumps(SEEN["data"]["users"], sort_keys=True) != before
+        return json.loads(json.dumps(SEEN["data"]))
+
+
+def usage_loop():
+    while True:
+        try:
+            usage_look()
+            if time.monotonic() - SEEN["saved"] >= USAGE_SAVE:
+                usage_save()
+        except Exception as e:
+            log("screen time failed: %r" % e)
+        time.sleep(USAGE_TICK)
 
 
 # ------------------------------------------------------------------- actions
@@ -814,21 +961,27 @@ def all_users():
     """Every account with its state, as the phone sees it."""
     if demo():
         return [dict(u) for u in demo()["users"]]
-    states = user_states()
-    return [{"name": u["name"], "full": u["full"], "admin": u["admin"],
-             "state": states.get(u["name"], "none")} for u in human_users()]
+    states, since = user_states()
+    return [{"name": u["name"], "full": u["full"], "admin": u["admin"], "state": states.get(u["name"], "none"),
+             **({"since": since[u["name"]]} if u["name"] in since else {})} for u in human_users()]
 
 
 def op_status(req, st):
     now, users = time.time(), all_users()
+    seen = usage_look(users)
     for u in users:
+        mine = seen["users"].get(u["name"]) or {"days": {}, "logins": []}
+        u.pop("since", None)
+        if u["state"] != "none" and mine["logins"] and mine["logins"][-1][1] is None:
+            u["since"] = mine["logins"][-1][0]
+        u["today"] = int(mine["days"].get(kept_days(now)[0], {}).get("used", 0))
         e = st["net"].get(u["name"]) or {}
         u["net"] = "off" if e.get("blocked") and not u["admin"] else "on"
         if e.get("deadline") is not None and not u["admin"]:
             u["net_timer"] = {"remaining": max(0, int(e["deadline"] - now)), "warn": bool(e.get("warn"))}
     t = st["timer"]
     timer = {"remaining": max(0, int(t["deadline"] - now)), "warn": bool(t.get("warn"))} if t else None
-    caps = ["seconds", "browsers"] + (["net"] if net_supported() else []) + (["login"] if login_hook() else [])
+    caps = ["seconds", "browsers", "usage"] + (["net"] if net_supported() else []) + (["login"] if login_hook() else [])
     return {"ok": True, "id": st["id"], "name": host_name(), "os": os_name(),
             "users": users, "timer": timer, "caps": caps, "dry": DRY}
 
@@ -859,6 +1012,20 @@ def op_browsers(req, st):
     except Exception as e:
         log("browser activity failed: %r" % e)
         return {"ok": True, "browsers": []}
+
+
+def op_usage(req, st):
+    """Screen time: for every account, today and yesterday, since the computer was turned on,
+    and its logins of those two days, newest first."""
+    now, users = time.time(), all_users()
+    seen, out = usage_look(users), []
+    for u in users:
+        e = seen["users"].get(u["name"]) or {"days": {}, "boot": {}, "logins": []}
+        row = lambda r: {"used": int(r.get("used", 0)), "on": int(r.get("on", 0))}
+        out.append({"name": u["name"], "state": u["state"], "boot": row(e["boot"]),
+                    "days": [dict(row(e["days"].get(day, {})), date=day) for day in kept_days(now)],
+                    "logins": [{"start": a, "end": b} for a, b in reversed(e["logins"])]})
+    return {"ok": True, "now": int(now), "boot": boot_time(), "users": out}
 
 
 def countdown(req, low=10):
@@ -1130,7 +1297,7 @@ def op_forget(req, st):
     return {"ok": True}
 
 
-OPS = {"status": op_status, "apps": op_apps, "browsers": op_browsers, "poweroff": op_power, "reboot": op_power,
+OPS = {"status": op_status, "apps": op_apps, "browsers": op_browsers, "usage": op_usage, "poweroff": op_power, "reboot": op_power,
        "timer_set": op_timer_set, "timer_cancel": op_timer_cancel, "lock": op_lock,
        "logout": op_logout, "login": op_login, "net_set": op_net_set, "net_clear": op_net_clear,
        "forget": op_forget}
@@ -1278,10 +1445,16 @@ def serve():
     with state() as st:
         log("Curfew agent %s listening on port %d" % (st["id"], PORT))
     threading.Thread(target=timer_loop, daemon=True).start()
+    threading.Thread(target=usage_loop, daemon=True).start()
+
+    def stop(*_):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, stop)     # so that the screen-time totals are written before it ends
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         pass
+    usage_save()
 
 
 # ------------------------------------------------------------------- QR code

@@ -11,6 +11,7 @@ From the phone you can:
 - turn the internet off for one account, now or after a countdown, while the computer stays on
 - see what each person has open, including programs started from a terminal (common apps like Chrome, Firefox, Discord, Minecraft and Spotify show their own logo)
 - see which websites each person has visited, and what they searched for, in each browser
+- see how long each account was used today and yesterday, and when it logged in and out
 
 It works whoever is logged in on the laptop, and also when nobody is logged in yet.
 
@@ -77,8 +78,8 @@ The code works once, for one phone, and expires after two minutes, so a photo of
 ## Using the app
 
 - **Home screen:** one card per laptop. A glowing green power light means it is on; a dim one means off or out of reach. The line below says who is using it. If a countdown is running you see it here.
-- **Tap a laptop:** Shut down, Restart, the shut-down timer, and the list of accounts on that laptop with what each is doing (not logged in, logged in in the background, in use right now, screen locked). After "Switch user", both accounts are logged in and both are shown.
-- **Tap an account:** Log in without the password, Lock screen, Log out, the internet for that account, and what that person has open at the moment.
+- **Tap a laptop:** Shut down, Restart, the shut-down timer, and the list of accounts on that laptop with what each is doing (not logged in, logged in in the background, in use right now, screen locked). After "Switch user", both accounts are logged in and both are shown: the one on the screen has a green dot, the one left in the background an orange dot. Under each name you see since when it is logged in and how long it was used today. **Screen time** at the bottom opens the times for every account.
+- **Tap an account:** Log in without the password, Lock screen, Log out, a shut-down timer for the computer, the internet for that account, and what that person has open at the moment.
 - **The pencil** at the top of a laptop or an account gives it a name of your own ("Fatima's computer", "Gaming"). The name exists only in the app; nothing changes on the laptop.
 
 The timers are silent unless you turn on **Warn them first**, which shows a notice on the laptop when the timer starts and again one minute before the end.
@@ -106,6 +107,12 @@ This reads the browser's own history on the laptop, so it works even when the pe
 What it cannot show: **private or incognito windows**. Browsers write nothing to disk for those, so there is nothing to read — the honest way to handle them is to switch private windows off, which can be added later. Open tabs are read exactly for Firefox; for Chrome they are shown as "the last few minutes", because Chrome does not let anything read its open tabs. Other browsers (Brave, Edge, Tor) are not read.
 
 The list travels over the home Wi-Fi signed but **not encrypted**, the same as everything else Curfew sends, so treat it as private to the home network.
+
+### Screen time
+
+On a laptop's page, **Screen time** shows every account: how long it was used today, how long yesterday, how long since the laptop was turned on, and each login with its date and time ("2 Oct 2026, 8:55 PM") and when it logged out. The same box is on each account's own page. Logging out and back in adds to the same day's total; the day starts again at midnight, and only today and yesterday are kept.
+
+Time counts while the account is on the screen and unlocked. A locked screen does not count, and neither does an account that was left logged in while someone else used the laptop after "Switch user". The laptop only counts while Curfew is installed, so the first day starts from the moment you install this version.
 
 ### Internet for one account
 

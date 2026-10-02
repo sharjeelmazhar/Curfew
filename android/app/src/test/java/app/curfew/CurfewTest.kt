@@ -263,6 +263,61 @@ class CurfewTest {
         assertNull(parseStatus(JSONObject("""{"ok":true,"timer":null}""")).timerSeconds)
     }
 
+    @Test fun namesInTheHeadlineAreMarkedForBold() {
+        val s = parseStatus(JSONObject(statusJson))
+        assertEquals("\u0002Gaming\u0003 is using it · \u0002classes\u0003 also logged in", s.headline { bold(it.display) })
+    }
+
+    private val karachi = java.time.ZoneId.of("Asia/Karachi")
+    private val at2055 = 1790956500L        // 2 Oct 2026, 8:55 PM in Karachi
+
+    @Test fun screenTimeInStatus() {
+        val s = parseStatus(JSONObject("""{"users":[
+            {"name":"gaming","full":"Gaming","state":"active","since":$at2055,"today":7800},
+            {"name":"classes","full":"","state":"logged_in","since":${at2055 - 86400},"today":20},
+            {"name":"dad","full":"Dad","state":"none","today":3600},
+            {"name":"old","full":"","state":"active"}]}"""))
+        assertEquals(listOf(7800, 20, 3600, null), s.users.map { it.todaySeconds })
+        assertEquals(listOf(at2055, at2055 - 86400, null, null), s.users.map { it.since })
+        val now = at2055 + 3600
+        assertEquals("Logged in since 8:55 PM · Used 2 h 10 min today", useLine(s.users[0], now, karachi, false))
+        assertEquals("Logged in since 20:55 · Used 2 h 10 min today", useLine(s.users[0], now, karachi, true))
+        assertEquals("Logged in since 1 Oct 2026, 8:55 PM", useLine(s.users[1], now, karachi, false))
+        assertEquals("Used 1 h today", useLine(s.users[2], now, karachi, false))
+        assertEquals("", useLine(s.users[3], now, karachi, false))         // a computer whose Curfew is older
+    }
+
+    @Test fun datesAreDayMonthYearThenTime() {
+        assertEquals("2 Oct 2026, 8:55 PM", formatMoment(at2055, karachi, false))
+        assertEquals("2 Oct 2026, 20:55", formatMoment(at2055, karachi, true))
+        assertEquals("1 Oct 2026", formatDay("2026-10-01"))
+        assertEquals("soon", formatDay("soon"))
+        assertEquals("0 min", formatDuration(59))
+        assertEquals("45 min", formatDuration(45 * 60 + 59))
+        assertEquals("5 h 2 min", formatDuration(5 * 3600 + 120))
+        assertEquals("0 min", formatDuration(-5))
+    }
+
+    @Test fun usageParses() {
+        val u = parseUsage(JSONObject("""{"ok":true,"now":${at2055 + 600},"boot":${at2055 - 60},"users":[
+            {"name":"gaming","state":"active","boot":{"used":540,"on":600},
+             "days":[{"date":"2026-10-02","used":7800,"on":9000},{"date":"2026-10-01","used":18000,"on":20000}],
+             "logins":[{"start":$at2055,"end":null},{"start":${at2055 - 7200},"end":${at2055 - 3600}}]},
+            {"name":"dad","state":"none","boot":{"used":0,"on":0},
+             "days":[{"date":"2026-10-02","used":0,"on":0},{"date":"2026-10-01","used":0,"on":0}],"logins":[]}]}"""))
+        assertEquals(at2055 - 60, u.boot)
+        val g = u.users[0]
+        assertEquals(7800, g.today?.used)
+        assertEquals("2026-10-01", g.yesterday?.date)
+        assertEquals(540, g.bootUsed)
+        assertEquals(at2055, g.since)
+        assertEquals(LoginSpan(at2055 - 7200, at2055 - 3600), g.logins[1])
+        assertFalse(g.empty)
+        assertTrue(u.users[1].empty)
+        assertNull(u.users[1].since)
+        assertTrue(parseUsage(JSONObject("{}")).users.isEmpty())
+    }
+
     @Test fun headlineSaysWhoIsUsingIt() {
         val s = parseStatus(JSONObject(statusJson))
         assertEquals("Gaming is using it · classes also logged in", s.headline())
