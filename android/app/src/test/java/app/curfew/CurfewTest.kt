@@ -342,6 +342,47 @@ class CurfewTest {
         assertFalse(inSubnet("laptop.local", "192.168.1.7", 24))
     }
 
+    @Test fun browsersParse() {
+        val j = JSONObject(
+            """{"browsers":[
+              {"id":"firefox","name":"Firefox",
+               "open":[{"url":"https://youtube.com/x","title":"A video","host":"youtube.com","when":1000,"search":""}],
+               "recent":[
+                 {"url":"https://google.com/search?q=cats","title":"cats - Google Search","host":"google.com","when":900,"search":"cats"},
+                 {"url":"","title":"junk","host":"","when":0,"search":""}]},
+              {"name":"","id":"bad","open":[],"recent":[]}]}""",
+        )
+        val bs = parseBrowsers(j)
+        assertEquals(1, bs.size)                       // the nameless browser is dropped
+        val fx = bs[0]
+        assertEquals("Firefox", fx.name)
+        assertEquals(1, fx.open.size)
+        assertEquals(1, fx.recent.size)                // the entry with no url is dropped
+        assertEquals("cats", fx.recent[0].search)
+        assertEquals("cats", fx.recent[0].label)       // search words win the label
+        assertEquals("A video", fx.open[0].label)      // else the title
+    }
+
+    @Test fun browserSearchFilter() {
+        val video = WebEntry("https://youtube.com/watch", "Minecraft montage", "youtube.com", 10, "")
+        val search = WebEntry("https://google.com/search?q=netflix", "netflix - Google Search", "google.com", 10, "netflix")
+        assertTrue(video.matches(""))                  // empty query matches everything
+        assertTrue(video.matches("minecraft"))         // title, case-insensitive
+        assertTrue(video.matches("YOUTUBE"))           // host
+        assertFalse(video.matches("netflix"))
+        assertTrue(search.matches("netflix"))          // search words
+        assertTrue(search.matches("goog"))             // host
+    }
+
+    @Test fun whenInWords() {
+        val now = 1_000_000L
+        assertEquals("Just now", formatWhen(now - 30, now))
+        assertEquals("7 min ago", formatWhen(now - 7 * 60, now))
+        assertEquals("3 h ago", formatWhen(now - 3 * 3600, now))
+        assertEquals("2 days ago", formatWhen(now - 2 * 86400, now))
+        assertEquals("", formatWhen(0, now))
+    }
+
     @Test fun formatting() {
         assertEquals("0:05", formatCountdown(5))
         assertEquals("12:34", formatCountdown(754))

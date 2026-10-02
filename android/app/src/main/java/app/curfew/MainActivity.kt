@@ -89,7 +89,14 @@ fun CurfewNav(repo: Repo) {
         }
         composable("user/{id}/{user}") { entry ->
             val id = entry.arguments?.getString("id").orEmpty()
-            UserScreen(repo, snack, id, entry.arguments?.getString("user").orEmpty(), onBack = ::back, onGone = ::home)
+            val user = entry.arguments?.getString("user").orEmpty()
+            UserScreen(repo, snack, id, user, onBack = ::back, onGone = ::home,
+                onBrowser = { go("browser/$id/${Uri.encode(user)}/$it") })
+        }
+        composable("browser/{id}/{user}/{browser}") { entry ->
+            val id = entry.arguments?.getString("id").orEmpty()
+            BrowserScreen(repo, snack, id, entry.arguments?.getString("user").orEmpty(),
+                entry.arguments?.getString("browser").orEmpty(), onBack = ::back, onGone = ::home)
         }
     }
 }

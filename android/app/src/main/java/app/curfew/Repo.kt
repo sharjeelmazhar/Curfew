@@ -352,6 +352,15 @@ class Repo(private val app: Context) {
         }
     }
 
+    /** The browsers a user has used and the sites in each, or null if the computer could not be asked. */
+    suspend fun browsers(id: String, user: String): List<BrowserInfo>? = withContext(Dispatchers.IO) {
+        val c = _store.value.computers.find { it.id == id } ?: return@withContext null
+        serial(id) {
+            val (reply, ep) = reach(c, JSONObject().put("op", "browsers").put("user", user))
+            absorb(c, reply, ep)?.let(::parseBrowsers)
+        }
+    }
+
     suspend fun pair(link: PairLink): PairResult = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
         val r = client.pair(link, phoneName, now)

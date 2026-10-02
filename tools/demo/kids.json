@@ -8,4 +8,29 @@
   {"name": "Firefox", "detail": "", "age": 1260, "terminal": false},
   {"name": "Discord", "detail": "", "age": 1300, "terminal": false},
   {"name": "Terminal", "detail": "", "age": 4000, "terminal": false}],
-  "classes": [{"name": "LibreOffice Writer", "detail": "", "age": 7300, "terminal": false}]}}
+  "classes": [{"name": "LibreOffice Writer", "detail": "", "age": 7300, "terminal": false}]},
+ "browsers": {"gaming": [
+  {"id": "firefox", "name": "Firefox",
+   "open": [
+    {"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "title": "Minecraft parkour montage - YouTube", "host": "youtube.com", "when": 1727870000, "search": ""},
+    {"url": "https://www.google.com/search?q=how+to+beat+the+ender+dragon", "title": "how to beat the ender dragon - Google Search", "host": "google.com", "when": 1727869900, "search": "how to beat the ender dragon"}],
+   "recent": [
+    {"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "title": "Minecraft parkour montage - YouTube", "host": "youtube.com", "when": 1727870000, "search": ""},
+    {"url": "https://www.google.com/search?q=how+to+beat+the+ender+dragon", "title": "how to beat the ender dragon - Google Search", "host": "google.com", "when": 1727869900, "search": "how to beat the ender dragon"},
+    {"url": "https://www.minecraft.net/en-us", "title": "Minecraft Official Site", "host": "minecraft.net", "when": 1727869000, "search": ""},
+    {"url": "https://www.twitch.tv/directory/game/Minecraft", "title": "Minecraft - Twitch", "host": "twitch.tv", "when": 1727866000, "search": ""},
+    {"url": "https://www.google.com/search?q=netflix+stranger+things", "title": "netflix stranger things - Google Search", "host": "google.com", "when": 1727860000, "search": "netflix stranger things"},
+    {"url": "https://www.netflix.com/title/80057281", "title": "Stranger Things - Netflix", "host": "netflix.com", "when": 1727859000, "search": ""}]},
+  {"id": "chrome", "name": "Google Chrome",
+   "open": [],
+   "recent": [
+    {"url": "https://discord.com/channels/@me", "title": "Discord", "host": "discord.com", "when": 1727855000, "search": ""},
+    {"url": "https://www.google.com/search?q=roblox+free+games", "title": "roblox free games - Google Search", "host": "google.com", "when": 1727854000, "search": "roblox free games"},
+    {"url": "https://www.roblox.com/games", "title": "Games - Roblox", "host": "roblox.com", "when": 1727853000, "search": ""}]}],
+  "classes": [
+  {"id": "firefox", "name": "Firefox",
+   "open": [{"url": "https://classroom.google.com/", "title": "Google Classroom", "host": "classroom.google.com", "when": 1727870000, "search": ""}],
+   "recent": [
+    {"url": "https://classroom.google.com/", "title": "Google Classroom", "host": "classroom.google.com", "when": 1727870000, "search": ""},
+    {"url": "https://www.google.com/search?q=photosynthesis+for+kids", "title": "photosynthesis for kids - Google Search", "host": "google.com", "when": 1727869000, "search": "photosynthesis for kids"},
+    {"url": "https://en.wikipedia.org/wiki/Photosynthesis", "title": "Photosynthesis - Wikipedia", "host": "en.wikipedia.org", "when": 1727868500, "search": ""}]}]}}

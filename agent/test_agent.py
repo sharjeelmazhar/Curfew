@@ -163,6 +163,14 @@ try:
     st, r = call(a, "apps", user=me)
     check("apps list works", st == 200 and r["ok"] and isinstance(r["apps"], list))
     check("unknown user refused", call(a, "apps", user="root")[1] == {"ok": False, "error": "bad_user"})
+    check("status advertises the browsers capability", "browsers" in s["caps"])
+    st, r = call(a, "browsers", user=me)
+    check("browsers op works", st == 200 and r["ok"] and isinstance(r["browsers"], list))
+    for br in r["browsers"]:
+        shape_ok = {"id", "name", "open", "recent"} <= set(br) and isinstance(br["open"], list) and isinstance(br["recent"], list)
+        entries_ok = all({"url", "title", "host", "when", "search"} <= set(e) for e in br["open"] + br["recent"])
+        check("browser %s has the right shape" % br.get("id"), shape_ok and entries_ok)
+    check("browsers for an unknown user refused", call(a, "browsers", user="root")[1] == {"ok": False, "error": "bad_user"})
     check("unknown op refused", call(a, "run", cmd="id")[1] == {"ok": False, "error": "bad_op"})
 
     # --- bad key / replay / malformed
