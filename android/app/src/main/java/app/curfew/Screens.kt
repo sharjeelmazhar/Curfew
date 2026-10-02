@@ -81,7 +81,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.google.android.gms.common.moduleinstall.InstallStatusListener
 import com.google.android.gms.common.moduleinstall.ModuleInstall
+import com.google.android.gms.common.moduleinstall.ModuleInstallRequest
+import com.google.android.gms.common.moduleinstall.ModuleInstallStatusUpdate
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
@@ -477,6 +480,8 @@ fun UserScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: Strin
     val caps = live.status?.caps.orEmpty()
     val confirmOwner = LocalConfirmOwner.current
     var netWarn by rememberSaveable { mutableStateOf(false) }
+    var shutWarn by rememberSaveable { mutableStateOf(false) }
+    val shutLeft = secondsLeft(live.timerEndsAt.takeIf { on })
     var approvedUntil by remember { mutableStateOf<Long?>(null) }
     val approvedLeft = secondsLeft(approvedUntil.takeIf { on && user?.state == UserState.NONE })
     val netLeft = secondsLeft(live.netEndsAt[userName].takeIf { on })
@@ -562,6 +567,30 @@ fun UserScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: Strin
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 BigButton("Lock screen", Icons.Rounded.Lock, { run("lock", "Locked $name’s screen") }, Modifier.weight(1f), busy = busy == "lock", enabled = loggedIn && busy == null)
                 BigButton("Log out", Icons.AutoMirrored.Rounded.Logout, { ask = Ask.LOGOUT }, Modifier.weight(1f), busy = busy == "logout", enabled = loggedIn && busy == null)
+            }
+        }
+        if (on) {
+            // The same shut-down timer as on the computer's page, here too so both are in one place.
+            item { SectionLabel("Shut down the computer") }
+            item {
+                Card {
+                    if (shutLeft != null) CountdownHead("Shuts down in", shutLeft, busy == null) { run("timer_cancel", "Timer cancelled") }
+                    else Text("Shut down after", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "The whole computer shuts down, for everyone using it.",
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.size(12.dp))
+                    TimerChoices(
+                        "Shut down after", busy == null, shutWarn, { shutWarn = it },
+                        "Shows a notice on the computer when the timer starts and one minute before it ends",
+                    ) { seconds -> run("timer_set", "Shuts down in ${formatLength(seconds)}", lengthArgs(seconds, shutWarn)) }
+                    Spacer(Modifier.size(8.dp))
+                    BigButton(
+                        "Shut down now", Icons.Rounded.PowerSettingsNew, { ask = Ask.POWEROFF }, Modifier.fillMaxWidth(),
+                        busy = busy == "poweroff", enabled = busy == null, danger = true,
+                    )
+                }
             }
         }
         if (on && user != null && "net" in caps) {
@@ -656,6 +685,10 @@ fun UserScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: Strin
     }
 
     when (ask) {
+        Ask.POWEROFF -> ConfirmSheet(
+            "Shut down ${c.title}?", "It shuts down straight away, for everyone using it. Anything not saved is lost.", "Shut down",
+            onConfirm = { ask = null; run("poweroff", "Shutting down ${c.title}") }, onDismiss = { ask = null },
+        )
         Ask.LOGOUT -> ConfirmSheet(
             "Log out $name?", "Everything $name has open is closed. Anything not saved is lost.", "Log out",
             onConfirm = { ask = null; run("logout", "Logged out $name") }, onDismiss = { ask = null },
@@ -869,10 +902,49 @@ fun AddScreen(repo: Repo, snack: SnackbarHostState, onBack: () -> Unit, onDone: 
         }
     }
 
+    /** Percent downloaded while the scanner is being fetched, or null when it is not. */
+    var preparing by remember { mutableStateOf<Int?>(null) }
+    fun scannerClient() = GmsBarcodeScanning.getClient(
+        context, GmsBarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).enableAutoZoom().build(),
+    )
+
+    /** The scanner is a small part of Google Play services that some phones do not have yet.
+     *  Asks for it straight away (not "when convenient") and shows the download. */
+    fun getScannerReady() {
+        if (preparing != null) return
+        val installer = ModuleInstall.getClient(context)
+        val scanner = scannerClient()
+        installer.areModulesAvailable(scanner).addOnSuccessListener { have ->
+            if (have.areModulesAvailable()) return@addOnSuccessListener
+            preparing = 0
+            val listener = object : InstallStatusListener {
+                override fun onInstallStatusUpdated(update: ModuleInstallStatusUpdate) {
+                    update.progressInfo?.let { p ->
+                        if (p.totalBytesToDownload > 0) preparing = (p.bytesDownloaded * 100 / p.totalBytesToDownload).toInt()
+                    }
+                    when (update.installState) {
+                        ModuleInstallStatusUpdate.InstallState.STATE_COMPLETED -> {
+                            preparing = null; installer.unregisterListener(this)
+                            if (error?.startsWith("The camera scanner") == true) error = null
+                        }
+                        ModuleInstallStatusUpdate.InstallState.STATE_FAILED, ModuleInstallStatusUpdate.InstallState.STATE_CANCELED -> {
+                            preparing = null; installer.unregisterListener(this)
+                            manual = true
+                            error = "The camera scanner could not be downloaded. Check the phone's internet, or type the address and code below."
+                        }
+                    }
+                }
+            }
+            installer.installModules(ModuleInstallRequest.newBuilder().addApi(scanner).setListener(listener).build())
+                .addOnSuccessListener { if (it.areModulesAlreadyInstalled()) preparing = null }
+                .addOnFailureListener { preparing = null }
+        }
+    }
+    LaunchedEffect(Unit) { getScannerReady() }
+
     fun scan() {
         error = null
-        val options = GmsBarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).enableAutoZoom().build()
-        val scanner = GmsBarcodeScanning.getClient(context, options)
+        val scanner = scannerClient()
         AppLock.away = true         // the scanner is another screen; coming back from it is not a new visit
         scanner.startScan()
             .addOnCanceledListener { AppLock.away = false }
@@ -882,16 +954,23 @@ fun AddScreen(repo: Repo, snack: SnackbarHostState, onBack: () -> Unit, onDone: 
             }
             .addOnFailureListener {
                 AppLock.away = false
-                // The scanner is a small Google Play download; ask for it so the next try works.
-                runCatching { ModuleInstall.getClient(context).deferredInstall(scanner) }
+                getScannerReady()
                 manual = true
-                error = "The camera scanner is not ready on this phone yet. Try again in a minute, or type the address and code below."
+                error = "The camera scanner is not ready on this phone yet. It is downloading now; tap Scan again when it is done, or type the address and code below."
             }
     }
 
     Page(
         "Add computer", snack, onBack,
-        bottomBar = { BottomAction { BigButton("Scan the code", Icons.Rounded.QrCodeScanner, ::scan, Modifier.fillMaxWidth(), busy = busy, primary = true) } },
+        bottomBar = {
+            BottomAction {
+                val p = preparing
+                BigButton(
+                    if (p == null) "Scan the code" else "Getting the scanner ready… $p%", Icons.Rounded.QrCodeScanner, ::scan,
+                    Modifier.fillMaxWidth(), busy = busy || p != null, enabled = p == null, primary = true,
+                )
+            }
+        },
     ) {
         item {
             Card {
