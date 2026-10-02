@@ -63,7 +63,9 @@ python3 agent/curfew.py --dry-run apps <user>          # what the phone would se
 - **Browser activity:** `browsers` op reads each account's Firefox (`places.sqlite`, open tabs from
   `sessionstore-backups/recovery.jsonlz4`, decoded by a pure-Python LZ4) and Chrome/Chromium
   (`History`, `keyword_search_terms`) by copying the database first, so it works while the browser
-  is open. Chrome's open tabs cannot be read; "open now" there is the last 3 minutes of history.
+  is open. Chrome's open tabs cannot be read; "open now" there is the last 90 s of history. History is
+  the last `HISTORY_DAYS` (7) days, capped at `HISTORY_MAX` rows. In the app each page is tappable
+  and opens in the phone's browser; the browser screen polls every 2 s so a new tab shows quickly.
   Private/incognito windows leave nothing on disk and are not shown.
 - **App:** locked behind `BiometricPrompt` (`Lock.kt`) every time it comes to the front; fingerprint
   only when one is enrolled, screen lock otherwise. Login from the phone asks for the fingerprint
