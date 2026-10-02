@@ -199,6 +199,7 @@ fun ComputerScreen(repo: Repo, snack: SnackbarHostState, id: String, onBack: () 
     var busy by remember { mutableStateOf<String?>(null) }
     var ask by remember { mutableStateOf<Ask?>(null) }
     var warn by rememberSaveable { mutableStateOf(false) }
+    val confirmOwner = LocalConfirmOwner.current
     val remaining = secondsLeft(live.timerEndsAt.takeIf { live.link == Link.ON })
     Every(4000, id) { repo.refresh(id) }
 
@@ -285,7 +286,14 @@ fun ComputerScreen(repo: Repo, snack: SnackbarHostState, id: String, onBack: () 
         )
         Ask.REMOVE -> ConfirmSheet(
             "Remove ${c.title}?", "This phone will no longer see or control it. To add it back, pair it again from the computer.", "Remove",
-            onConfirm = { ask = null; repo.remove(id); repo.notices.tryEmit("“${c.title}” was removed") }, onDismiss = { ask = null },
+            onConfirm = {
+                ask = null
+                // someone handed the open app must not be able to take a computer out of the parent's reach
+                confirmOwner("Remove ${c.title}", "This phone will no longer control it") { yes ->
+                    if (yes) { repo.remove(id); repo.notices.tryEmit("“${c.title}” was removed") }
+                }
+            },
+            onDismiss = { ask = null },
         )
         Ask.RENAME -> RenameSheet(
             "Name this computer", c.alias,
