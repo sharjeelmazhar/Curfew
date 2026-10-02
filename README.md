@@ -86,7 +86,13 @@ The timers are silent unless you turn on **Warn them first**, which shows a noti
 
 Open the account in the app and tap **Log in without the password**; the phone asks for your fingerprint. Then, on the laptop, they click their name at the login screen and are let in (if it is already asking for the password, they press Enter). The approval works once and only for two minutes. If the account is already logged in and locked, its screen simply unlocks.
 
-No password is stored on the phone or sent anywhere, so it does not matter if you change or forget the account's password. One side effect: programs that keep saved passwords in the account's keyring (some browsers) may ask for the account password once, as they do after a fingerprint login.
+Nothing is stored on the phone and no password travels over the network.
+
+**The keyring.** Ubuntu keeps an account's saved passwords (browsers and the like) in a keyring that is locked with the login password. So that a login from the phone does not end in a question about the keyring, the laptop remembers each account's login password the next time it is typed at the login screen, in a file only the administrator can read (`/var/lib/curfew/passwords.json`), and uses it to unlock the keyring after a login from the phone. This means:
+
+- log in to each account **once by typing its password** after installing Curfew; from then on the phone can do it without any question
+- if you change an account's password, type the new one once at the login screen
+- the file is deleted when Curfew is removed
 
 This needs the standard Ubuntu (GNOME) login screen.
 
@@ -139,7 +145,7 @@ On the laptop:
 sudo apt purge curfew
 ```
 
-It removes the service and everything it set up or stored. On the phone, remove the laptop in the app, or simply uninstall the app.
+It removes the service and everything it set up or stored, and the laptop is as it was before: the login screen asks for passwords as usual, anyone may change the Wi-Fi again, and no account has its internet blocked. On the phone, remove the laptop in the app, or simply uninstall the app.
 
 ## If something does not work
 

@@ -7,7 +7,7 @@ if dpkg -s curfew >/dev/null 2>&1; then
   apt-get purge -y curfew
 else                                            # installed from the folder, before there was a package
   systemctl disable --now curfew.service >/dev/null 2>&1
-  [ -f /etc/pam.d/gdm-password ] && sed -i '/curfew\.py pam-login/d' /etc/pam.d/gdm-password
+  [ -f /etc/pam.d/gdm-password ] && sed -i '/curfew\.py pam-/d' /etc/pam.d/gdm-password
   for t in iptables ip6tables; do
     command -v "$t" >/dev/null || continue
     while "$t" -w 5 -D OUTPUT -j CURFEW 2>/dev/null; do :; done

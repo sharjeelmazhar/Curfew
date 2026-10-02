@@ -23,6 +23,7 @@ import re
 import secrets
 import shutil
 import socket
+import struct
 import subprocess
 import sys
 import threading
@@ -225,8 +226,11 @@ NOISE = re.compile(r"^(org\.freedesktop\.|org\.gnome\.Shell|org\.gnome\.Settings
                    r"org\.gnome\.Calculator\.SearchProvider|org\.gnome\.Calendar$|org\.gnome\.Contacts\.SearchProvider)",
                    re.I)
 TERM_NOISE = re.compile(r"^(gitstatusd|ssh-agent|gpg-agent|dbus-|at-spi|fzf|starship|direnv|zoxide|atuin)")
+# small helpers that scripts and prompts run all the time; never what someone "has open"
+HELPERS = {"sleep", "tail", "head", "cat", "tee", "grep", "sed", "awk", "wc", "sort", "cut", "tr", "xargs",
+           "timeout", "true", "false", "echo", "printf", "date", "env", "ls", "ps", "find", "which", "watch"}
 MINECRAFT = re.compile(r"minecraft|tlauncher|launchwrapper|multimc|prismlauncher|lunarclient|badlion", re.I)
-TERM_SCOPE = re.compile(r"^(vte-spawn-|ptyxis-spawn-|tmux-spawn-|foot|kgx-)")
+TERM_SCOPE = re.compile(r"^(vte-spawn-|ptyxis-spawn-|tmux-spawn-|app-ghostty-surface-|foot|kgx-)")
 _desktop_cache = {}
 
 
@@ -283,7 +287,8 @@ def unit_app_ids(cgroup):
     m = re.match(r"^snap\.([^.]+)\.(.+?)[-.][0-9a-f]{8}-[0-9a-f-]{27}\.scope$", unit)
     if m:
         return [m.group(1) + "_" + m.group(2), m.group(1)]
-    m = re.match(r"^app-(.+?)-(\d+|[0-9a-f]{32})\.scope$", unit) or re.match(r"^app-(.+?)@[^@]*\.service$", unit)
+    m = (re.match(r"^app-(.+?)-(\d+|[0-9a-f]{32})\.scope$", unit) or re.match(r"^app-(.+?)@[^@]*\.service$", unit)
+         or re.match(r"^app-([^@]+)\.service$", unit))          # an app that runs as its own service (Ghostty)
     if m:
         if "autostart" in unit:
             return []
@@ -383,9 +388,14 @@ def open_apps(user):
         if old is None or age > old["age"]:
             apps[name] = {"name": name, "detail": detail, "age": age, "terminal": terminal}
 
-    in_term = lambda p: p["pts"] or bool(TERM_SCOPE.match(p["cg"].rsplit("/", 1)[-1]))
+    # a desktop service may hold a terminal device without anyone having typed a command
+    # (the file manager's connection to a phone runs ssh that way)
+    service = lambda p: "/session.slice/" in p["cg"] or "/background.slice/" in p["cg"]
+    in_term = lambda p: not service(p) and (p["pts"] or bool(TERM_SCOPE.match(p["cg"].rsplit("/", 1)[-1])))
+    plain = lambda p: os.path.basename(p["argv"][0]).lstrip("-")
     cand = {pid for pid, p in procs.items()
-            if in_term(p) and p["comm"] not in SHELLS and not TERM_NOISE.match(p["comm"]) and os.path.basename(p["argv"][0]).lstrip("-") not in SHELLS}
+            if in_term(p) and p["comm"] not in SHELLS and not TERM_NOISE.match(p["comm"])
+            and plain(p) not in SHELLS and plain(p) not in HELPERS}
     for pid in cand:
         p = procs[pid]
         if p["ppid"] in cand:
@@ -407,7 +417,11 @@ def open_apps(user):
         if entry is None:
             if not p["cg"].endswith(".scope") or any(i.lower() in autostart for i in ids):
                 continue        # a background service or start-up helper without a launcher entry
-            entry = (ids[-1].split(".")[-1].replace("_", " ").replace("-", " ").title(), False)
+            # No launcher under that id (an app built on a browser engine names its group after
+            # the engine): go by the program that runs in it.
+            mates = [q for q in procs.values() if q["cg"] == p["cg"]]
+            known = next((by_exec[plain(q)] for q in sorted(mates, key=lambda q: -q["age"]) if plain(q) in by_exec), None)
+            entry = (known or ids[-1].split(".")[-1].replace("_", " ").replace("-", " ").title(), False)
         if entry[1]:
             continue
         add(entry[0], "", p["age"], False)
@@ -724,6 +738,8 @@ def op_login(req, st):
         with open(login_path(name), "w") as f:
             f.write(str(time.time() + LOGIN_SECONDS))
         log("login approved for %s by phone %r" % (name, st["phones"].get(req["_phone"], {}).get("name")))
+    real = find_user(req)
+    threading.Thread(target=unlock_keyring, daemon=True, args=(real, LOGIN_SECONDS + 30 if not mine else 15)).start()
     if not mine:
         return {"ok": True, "how": "approved", "seconds": LOGIN_SECONDS}
     for s in live:                      # nobody else's open session is left behind unlocked
@@ -732,6 +748,89 @@ def op_login(req, st):
     ok = (act("bring the session of %s to the screen" % name, ["loginctl", "activate", mine[0]])
           and act("unlock the screen of " + name, ["loginctl", "unlock-session", mine[0]]))
     return {"ok": True, "how": "unlocked", "seconds": LOGIN_SECONDS} if ok else {"ok": False, "error": "failed"}
+
+
+def passwords(change=None):
+    """The login passwords remembered for unlocking keyrings (see cmd_pam_remember),
+    in a file only root can read. change(dict) edits them."""
+    path = os.path.join(STATE_DIR, "passwords.json")
+    with state():                       # same lock as the state file
+        try:
+            with open(path) as f:
+                known = json.load(f)
+        except (OSError, ValueError):
+            known = {}
+        if change:
+            change(known)
+            fd = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f:
+                json.dump(known, f)
+            os.replace(path + ".tmp", path)
+    return known
+
+
+def cmd_pam_remember():
+    """Run by the login screen after a password was typed and accepted, with the
+    password on standard input. It is kept so that a later login from the phone
+    can unlock the account's keyring (saved passwords of browsers and the like),
+    which is locked with this password; without it every such login would end in
+    a question about the keyring."""
+    name = os.environ.get("PAM_USER", "")
+    if os.environ.get("PAM_TYPE") != "auth" or not find_user({"user": name}):
+        return 1
+    secret = sys.stdin.buffer.read(4096).split(b"\0")[0].decode(errors="surrogateescape")
+    if secret:
+        passwords(lambda known: known.update({name: secret}))
+    return 0
+
+
+def keyring_control(path, secret):
+    """Ask a running gnome-keyring to unlock the login keyring (or to create it, for an
+    account that has none), the way its own login module does. 0 means unlocked."""
+    data = secret.encode(errors="surrogateescape")
+    with socket.socket(socket.AF_UNIX) as s:
+        s.settimeout(5)
+        s.connect(path)
+        s.sendall(b"\0" + struct.pack(">III", 12 + len(data), 1, len(data)) + data)
+        answer = b""
+        while len(answer) < 8:
+            chunk = s.recv(8 - len(answer))
+            if not chunk:
+                return -1
+            answer += chunk
+    return struct.unpack(">II", answer)[1]
+
+
+def cmd_keyring(path):
+    """Helper the agent runs as the account itself: the keyring only listens to its owner."""
+    try:
+        return 0 if keyring_control(path, sys.stdin.buffer.read(4096).decode(errors="surrogateescape")) == 0 else 1
+    except OSError:
+        return 2
+
+
+def unlock_keyring(u, wait):
+    """After a login from the phone: unlock the keyring with the remembered password as
+    soon as the session has one, so nothing asks for it. Gives up after `wait` seconds
+    (the approval was not used) or if there is nothing remembered."""
+    secret = passwords().get(u["name"])
+    if not secret:
+        return log("no password remembered for %s yet; its keyring stays locked" % u["name"])
+    path = "/run/user/%d/keyring/control" % u["uid"]
+    if DRY:
+        return log("would unlock the keyring of " + u["name"])
+    end = time.monotonic() + wait
+    while time.monotonic() < end:
+        if os.path.exists(path):
+            try:
+                gid = pwd.getpwnam(u["name"]).pw_gid
+                r = subprocess.run([sys.executable, os.path.abspath(__file__), "keyring", path], input=secret.encode(
+                    errors="surrogateescape"), user=u["uid"], group=gid, extra_groups=[], timeout=10, capture_output=True)
+            except (OSError, KeyError, subprocess.SubprocessError) as e:
+                return log("keyring of %s: %r" % (u["name"], e))
+            if r.returncode != 2:       # 2: not listening yet, try again
+                return log("keyring of %s %s" % (u["name"], "unlocked" if r.returncode == 0 else "did not accept the remembered password"))
+        time.sleep(0.5)
 
 
 def cmd_pam_login():
@@ -1201,6 +1300,8 @@ USAGE = """Curfew - control this computer from a paired phone.
 
 def main(argv):
     global DRY, PORT, STATE_DIR, RUN_DIR
+    if argv[:1] == ["keyring"] and len(argv) == 2:      # runs as the account, not as root
+        return cmd_keyring(argv[1])
     args = [a for a in argv if a != "--dry-run"]
     if len(args) != len(argv) or os.environ.get("CURFEW_DRY") == "1":
         DRY, PORT = True, int(os.environ.get("CURFEW_PORT", "8787"))
@@ -1218,6 +1319,8 @@ def main(argv):
         return serve()
     if cmd == "pam-login":
         return cmd_pam_login()
+    if cmd == "pam-remember":
+        return cmd_pam_remember()
     if cmd == "id":
         with state() as st:
             print(st["id"])
