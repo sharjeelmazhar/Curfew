@@ -87,13 +87,20 @@ fun CurfewNav(repo: Repo) {
         }
         composable("computer/{id}") { entry ->
             val id = entry.arguments?.getString("id").orEmpty()
-            ComputerScreen(repo, snack, id, onBack = ::back, onGone = ::home, onUser = { go("user/$id/${Uri.encode(it)}") })
+            ComputerScreen(repo, snack, id, onBack = ::back, onGone = ::home, onUser = { go("user/$id/${Uri.encode(it)}") },
+                onUsage = { go("usage/$id") })
         }
         composable("user/{id}/{user}") { entry ->
             val id = entry.arguments?.getString("id").orEmpty()
             val user = entry.arguments?.getString("user").orEmpty()
             UserScreen(repo, snack, id, user, onBack = ::back, onGone = ::home,
-                onBrowser = { go("browser/$id/${Uri.encode(user)}/$it") })
+                onBrowser = { go("browser/$id/${Uri.encode(user)}/$it") }, onUsage = { go("usage/$id/${Uri.encode(user)}") })
+        }
+        composable("usage/{id}") { entry ->                 // every account on that computer
+            UsageScreen(repo, snack, entry.arguments?.getString("id").orEmpty(), null, onBack = ::back, onGone = ::home)
+        }
+        composable("usage/{id}/{user}") { entry ->
+            UsageScreen(repo, snack, entry.arguments?.getString("id").orEmpty(), entry.arguments?.getString("user"), onBack = ::back, onGone = ::home)
         }
         composable("browser/{id}/{user}/{browser}") { entry ->
             val id = entry.arguments?.getString("id").orEmpty()

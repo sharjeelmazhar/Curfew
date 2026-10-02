@@ -2,6 +2,11 @@ package app.curfew
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /** Data, parsing and the wording shown to the parent. Plain JVM code, unit-tested. */
 
@@ -102,10 +107,13 @@ enum class UserState(val label: String) {
     }
 }
 
-/** [netOff]: the internet is turned off for this account. [netSeconds]: it turns off after this long. */
+/** [netOff]: the internet is turned off for this account. [netSeconds]: it turns off after this long.
+ *  [since]: when this login began (unix seconds), while logged in. [todaySeconds]: time in use today;
+ *  null from a computer whose Curfew does not keep screen time. */
 data class UserInfo(
     val name: String, val full: String, val admin: Boolean, val state: UserState,
     val netOff: Boolean = false, val netSeconds: Int? = null,
+    val since: Long? = null, val todaySeconds: Int? = null,
 ) {
     val display get() = full.ifBlank { name }
 }
@@ -166,7 +174,8 @@ fun parseStatus(j: JSONObject): Status {
         os = j.optString("os"),
         users = (0 until us.length()).mapNotNull { us.optJSONObject(it) }.filter { it.optString("name").isNotEmpty() }.map {
             UserInfo(it.optString("name"), it.optString("full"), it.optBoolean("admin"), UserState.of(it.optString("state")),
-                it.optString("net") == "off", it.optJSONObject("net_timer")?.optInt("remaining"))
+                it.optString("net") == "off", it.optJSONObject("net_timer")?.optInt("remaining"),
+                it.optLong("since").takeIf { t -> t > 0 }, if (it.has("today")) it.optInt("today") else null)
         },
         timerSeconds = t?.optInt("remaining"),
         warn = t?.optBoolean("warn") ?: false,
@@ -209,6 +218,72 @@ fun parseBrowsers(j: JSONObject): List<BrowserInfo> {
         BrowserInfo(it.optString("id"), it.optString("name"), entries(it.optJSONArray("open")), entries(it.optJSONArray("recent")))
     }
 }
+
+/** Marks a name inside a sentence so the screen can show it in bold (see boldNames in Ui.kt). */
+const val BOLD_ON = '\u0002'
+const val BOLD_OFF = '\u0003'
+fun bold(name: String) = "$BOLD_ON$name$BOLD_OFF"
+
+/** One day of an account: [used] seconds on the screen and unlocked, [on] seconds logged in. */
+data class DayUse(val date: String, val used: Int, val on: Int)
+
+/** One login, from [start] to [end] (unix seconds); [end] is null while still logged in. */
+data class LoginSpan(val start: Long, val end: Long?)
+
+/** Screen time of one account: [days] is today then yesterday, [logins] newest first. */
+data class UserUsage(
+    val name: String, val state: UserState, val bootUsed: Int, val days: List<DayUse>, val logins: List<LoginSpan>,
+) {
+    val today get() = days.getOrNull(0)
+    val yesterday get() = days.getOrNull(1)
+    val since get() = logins.firstOrNull()?.takeIf { it.end == null && state != UserState.NONE }?.start
+    val empty get() = logins.isEmpty() && bootUsed == 0 && days.all { it.used == 0 }
+}
+
+/** [now] is the computer's clock and [boot] when it was turned on (both unix seconds). */
+data class Usage(val now: Long, val boot: Long, val users: List<UserUsage>)
+
+fun parseUsage(j: JSONObject): Usage {
+    fun <T> list(a: JSONArray?, f: (JSONObject) -> T) = (0 until (a?.length() ?: 0)).mapNotNull { a?.optJSONObject(it) }.map(f)
+    return Usage(
+        j.optLong("now"), j.optLong("boot"),
+        list(j.optJSONArray("users")) { u ->
+            UserUsage(
+                u.optString("name"), UserState.of(u.optString("state")), u.optJSONObject("boot")?.optInt("used") ?: 0,
+                list(u.optJSONArray("days")) { DayUse(it.optString("date"), it.optInt("used"), it.optInt("on")) },
+                list(u.optJSONArray("logins")) { LoginSpan(it.optLong("start"), if (it.isNull("end")) null else it.optLong("end")) },
+            )
+        }.filter { it.name.isNotEmpty() },
+    )
+}
+
+/** A length of time in whole minutes: "0 min", "45 min", "5 h 2 min". */
+fun formatDuration(seconds: Long): String = formatMinutes((seconds.coerceAtLeast(0) / 60).toInt())
+
+private val DAY = DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH)
+
+/** "2026-10-02" as "2 Oct 2026"; anything else comes back unchanged. */
+fun formatDay(date: String): String = runCatching { LocalDate.parse(date).format(DAY) }.getOrDefault(date)
+
+/** A time of day: "8:55 PM", or "20:55" on a phone set to the 24-hour clock. */
+fun formatClock(unixSeconds: Long, zone: ZoneId, h24: Boolean): String =
+    DateTimeFormatter.ofPattern(if (h24) "HH:mm" else "h:mm a", Locale.ENGLISH).format(Instant.ofEpochSecond(unixSeconds).atZone(zone))
+
+/** Day, month, year, then the time: "2 Oct 2026, 8:55 PM". */
+fun formatMoment(unixSeconds: Long, zone: ZoneId, h24: Boolean): String =
+    DAY.format(Instant.ofEpochSecond(unixSeconds).atZone(zone)) + ", " + formatClock(unixSeconds, zone, h24)
+
+/** When a login began, short when it was today: "8:55 PM", otherwise "1 Oct 2026, 8:55 PM". */
+fun formatSince(since: Long, now: Long, zone: ZoneId, h24: Boolean): String {
+    fun day(t: Long) = Instant.ofEpochSecond(t).atZone(zone).toLocalDate()
+    return if (day(since) == day(now)) formatClock(since, zone, h24) else formatMoment(since, zone, h24)
+}
+
+/** The line under an account's name: since when it is logged in and how long it was used today. */
+fun useLine(u: UserInfo, now: Long, zone: ZoneId, h24: Boolean): String = listOfNotNull(
+    u.since?.takeIf { u.state != UserState.NONE }?.let { "Logged in since " + formatSince(it, now, zone, h24) },
+    u.todaySeconds?.takeIf { it >= 60 }?.let { "Used " + formatDuration(it.toLong()) + " today" },
+).joinToString(" · ")
 
 /** When a page was last seen, in words: "Just now", "7 min ago", "3 h ago", "2 days ago". */
 fun formatWhen(whenSeconds: Long, nowSeconds: Long): String {

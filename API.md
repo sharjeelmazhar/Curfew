@@ -66,9 +66,10 @@ Unauthenticated refusals (HTTP 4xx, treat as hints only): `unknown_phone`, `bad_
 
 | op | extra fields | answer |
 |---|---|---|
-| `status` | | `id`, `name`, `os`, `caps`, `users: [{name, full, admin, state, net, net_timer?}]`, `timer: null \| {remaining, warn}` |
+| `status` | | `id`, `name`, `os`, `caps`, `users: [{name, full, admin, state, since?, today, net, net_timer?}]`, `timer: null \| {remaining, warn}` |
 | `apps` | `user` | `apps: [{name, detail, age, terminal}]`, newest first, at most 15 |
 | `browsers` | `user` | `browsers: [{id, name, open, recent}]`; `open` and `recent` are `[{url, title, host, when, search}]`, newest first |
+| `usage` | | `now`, `boot`, `users: [{name, state, boot: {used, on}, days: [{date, used, on}], logins: [{start, end}]}]` |
 | `poweroff`, `reboot` | | |
 | `timer_set` | `seconds` (10-86400) or `minutes` (1-1440), `warn` (bool) | `timer` |
 | `timer_cancel` | | `timer: null` |
@@ -80,7 +81,16 @@ Unauthenticated refusals (HTTP 4xx, treat as hints only): `unknown_phone`, `bad_
 
 `caps` lists what this agent can do: `seconds` (timers in seconds), `net` (iptables is present),
 `login` (the login screen is set up to ask the agent), `browsers` (the agent can read browser
-history). An agent without `caps` is the first version.
+history), `usage` (the agent keeps screen time). An agent without `caps` is the first version.
+
+Screen time: `used` is seconds with the account on the screen and unlocked (`state` was `active`),
+`on` is seconds logged in at all. In `status`, `since` is when the account's current login began
+(unix seconds, only while logged in) and `today` is its `used` seconds today. In `usage`, `days` is
+today then yesterday (`date` as `2026-10-02`, in the computer's time zone, zeros when nothing
+happened), `boot` holds the totals since the computer was turned on, `logins` are the logins of those
+two days, newest first, with `end: null` while still logged in, and `now` and `boot` are the
+computer's clock and the time it was turned on. The agent looks every 15 seconds and on every
+`status` or `usage` call, and does not count time the computer was asleep.
 
 For `browsers`: `id` is `firefox`, `chrome` or `chromium`; `open` is the tabs open now (read
 exactly for Firefox, approximated as the last few minutes of history for Chrome/Chromium, which

@@ -1,6 +1,7 @@
 package app.curfew
 
 import android.os.SystemClock
+import android.text.format.DateFormat
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -12,7 +13,9 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -26,6 +29,9 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Language
@@ -88,6 +94,7 @@ import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.time.ZoneId
 import kotlin.math.roundToInt
 
 private val Tabular = TextStyle(fontFeatureSettings = "tnum")
@@ -167,7 +174,7 @@ private fun ComputerCard(c: Computer, live: Live, tag: String?, onClick: () -> U
                     if (tag != null) Text("  #$tag", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                 }
                 Text(
-                    cardLine(live.link, live.status, c::userTitle), style = MaterialTheme.typography.bodyMedium,
+                    boldNames(cardLine(live.link, live.status) { bold(c.userTitle(it)) }), style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3, overflow = TextOverflow.Ellipsis,
                 )
                 if (remaining != null) {
@@ -192,7 +199,7 @@ private fun ComputerCard(c: Computer, live: Live, tag: String?, onClick: () -> U
 private enum class Ask { POWEROFF, REBOOT, REMOVE, RENAME, LOGOUT, NET_OFF }
 
 @Composable
-fun ComputerScreen(repo: Repo, snack: SnackbarHostState, id: String, onBack: () -> Unit, onGone: () -> Unit, onUser: (String) -> Unit) {
+fun ComputerScreen(repo: Repo, snack: SnackbarHostState, id: String, onBack: () -> Unit, onGone: () -> Unit, onUser: (String) -> Unit, onUsage: () -> Unit) {
     val store by repo.store.collectAsStateWithLifecycle()
     val liveMap by repo.live.collectAsStateWithLifecycle()
     val c = store.computers.find { it.id == id }
@@ -228,7 +235,10 @@ fun ComputerScreen(repo: Repo, snack: SnackbarHostState, id: String, onBack: () 
                     PowerLamp(lampFor(live.link), 72.dp)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(cardLine(live.link, live.status, c::userTitle), style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            boldNames(cardLine(live.link, live.status) { bold(c.userTitle(it)) }),
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Normal),
+                        )
                         val os = live.status?.os.orEmpty()
                         if (live.link == Link.ON && os.isNotEmpty())
                             Text(os, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -268,6 +278,27 @@ fun ComputerScreen(repo: Repo, snack: SnackbarHostState, id: String, onBack: () 
                     users.forEachIndexed { i, u ->
                         if (i > 0) HorizontalDivider(Modifier.padding(start = 68.dp, end = 12.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                         UserRow(u, c.userTitle(u)) { onUser(u.name) }
+                    }
+                }
+            }
+            if (live.status?.caps?.contains("usage") == true) item {
+                Card(padding = 8.dp) {
+                    Row(
+                        Modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium).clickable(onClick = onUsage).padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.secondaryContainer), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Rounded.Schedule, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Screen time", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                "How long each account was used today and yesterday, and when it logged in",
+                                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Icon(Icons.Rounded.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
                     }
                 }
             }
@@ -407,11 +438,18 @@ private fun Avatar(name: String, size: Dp) {
     }
 }
 
+/** The phone's time zone, and whether it is set to the 24-hour clock. */
+@Composable
+private fun clock(): Pair<ZoneId, Boolean> {
+    val context = LocalContext.current
+    return remember { ZoneId.systemDefault() to DateFormat.is24HourFormat(context) }
+}
+
 @Composable
 private fun stateColor(s: UserState): Color = when (s) {
     UserState.ACTIVE -> LocalExtra.current.on
     UserState.LOCKED -> MaterialTheme.colorScheme.tertiary
-    UserState.LOGGED_IN -> MaterialTheme.colorScheme.primary
+    UserState.LOGGED_IN -> LocalExtra.current.away
     UserState.NONE -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.18f)
 }
 
@@ -439,6 +477,12 @@ private fun UserRow(u: UserInfo, title: String, onClick: () -> Unit) {
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             StateLine(u)
+            val (zone, h24) = clock()
+            val use = useLine(u, System.currentTimeMillis() / 1000, zone, h24)
+            if (use.isNotEmpty()) Text(
+                use, Modifier.padding(start = 17.dp), style = MaterialTheme.typography.bodyMedium.merge(Tabular),
+                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis,
+            )
         }
         Icon(Icons.Rounded.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
     }
@@ -447,7 +491,10 @@ private fun UserRow(u: UserInfo, title: String, onClick: () -> Unit) {
 // ------------------------------------------------------------------ user
 
 @Composable
-fun UserScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: String, onBack: () -> Unit, onGone: () -> Unit, onBrowser: (String) -> Unit) {
+fun UserScreen(
+    repo: Repo, snack: SnackbarHostState, id: String, userName: String, onBack: () -> Unit, onGone: () -> Unit,
+    onBrowser: (String) -> Unit, onUsage: () -> Unit,
+) {
     val store by repo.store.collectAsStateWithLifecycle()
     val liveMap by repo.live.collectAsStateWithLifecycle()
     val c = store.computers.find { it.id == id }
@@ -463,6 +510,7 @@ fun UserScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: Strin
     var apps by remember { mutableStateOf<List<AppInfo>?>(null) }
     var browsers by remember { mutableStateOf<List<BrowserInfo>?>(null) }
     var failed by remember { mutableStateOf(false) }
+    var usage by remember { mutableStateOf<UserUsage?>(null) }
     val canBrowsers = live.status?.caps?.contains("browsers") == true
     Every(5000, id + userName) {
         repo.refresh(id)
@@ -470,6 +518,7 @@ fun UserScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: Strin
         if (got != null) apps = got
         failed = got == null
         repo.browsers(id, userName)?.let { browsers = it }   // null on an older agent; the section stays hidden by caps
+        repo.usage(id)?.let { got -> usage = got.users.find { it.name == userName } }     // the same
     }
     val on = live.link == Link.ON
     val loggedIn = on && user != null && user.state != UserState.NONE
@@ -537,6 +586,27 @@ fun UserScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: Strin
                             user != null -> StateLine(user)
                             else -> Text("This account no longer exists", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
+                    }
+                }
+            }
+        }
+        if (on && user != null && "usage" in caps) item {
+            val (zone, h24) = clock()
+            val since = user.since?.takeIf { user.state != UserState.NONE }
+            Surface(onClick = onUsage, shape = MaterialTheme.shapes.large, color = LocalExtra.current.card, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(20.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Screen time", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                        Icon(Icons.Rounded.ChevronRight, "See the logins", tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
+                    }
+                    if (since != null) Text(
+                        "Logged in since " + formatMoment(since, zone, h24),
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.size(14.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Stat("Today", (usage?.today?.used ?: user.todaySeconds ?: 0).toLong(), Modifier.weight(1f))
+                        Stat("Yesterday", usage?.yesterday?.used?.toLong(), Modifier.weight(1f))
                     }
                 }
             }
@@ -771,6 +841,158 @@ private fun BrowserRow(b: BrowserInfo, onClick: () -> Unit) {
                 Text(sites.take(3).joinToString(", "), style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Icon(Icons.Rounded.ChevronRight, null, tint = scheme.onSurfaceVariant)
+    }
+}
+
+// ------------------------------------------------------------ screen time
+
+/** One number with its label, in a box of its own. A null [seconds] is not known yet. */
+@Composable
+private fun Stat(label: String, seconds: Long?, modifier: Modifier = Modifier) {
+    Column(modifier.clip(MaterialTheme.shapes.small).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)).padding(horizontal = 14.dp, vertical = 10.dp)) {
+        Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(seconds?.let(::formatDuration) ?: "…", style = MaterialTheme.typography.titleLarge.merge(Tabular), maxLines = 1)
+    }
+}
+
+/** Screen time of every account on a computer, or of [userName] alone. */
+@Composable
+fun UsageScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: String?, onBack: () -> Unit, onGone: () -> Unit) {
+    val store by repo.store.collectAsStateWithLifecycle()
+    val liveMap by repo.live.collectAsStateWithLifecycle()
+    val c = store.computers.find { it.id == id }
+    if (c == null) {
+        LaunchedEffect(Unit) { onGone() }
+        return
+    }
+    val live = liveMap[id] ?: Live()
+    var usage by remember { mutableStateOf<Usage?>(null) }
+    var failed by remember { mutableStateOf(false) }
+    Every(5000, id) {
+        repo.refresh(id)
+        val got = repo.usage(id)
+        if (got != null) usage = got
+        failed = got == null
+    }
+    val (zone, h24) = clock()
+    val u = usage
+    val shown = u?.users.orEmpty().filter { userName == null || it.name == userName }
+    // every bar on the page is drawn to the same scale: the longest day shown, and at least one hour
+    val longest = shown.flatMap { it.days }.maxOfOrNull { it.used }?.coerceAtLeast(3600) ?: 3600
+    fun nameOf(name: String) = c.userAliases[name] ?: live.status?.users?.find { it.name == name }?.display ?: name
+
+    Page("Screen time", snack, onBack) {
+        when {
+            live.link != Link.ON -> item { Note("The computer cannot be reached, so there is nothing to show.") }
+            u == null && failed -> item { Note("Could not get the screen time. Trying again…") }
+            u == null -> item { LookingCard() }
+            else -> {
+                if (u.boot > 0) item {
+                    Card {
+                        Text(c.title, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("On since " + formatMoment(u.boot, zone, h24), style = MaterialTheme.typography.titleMedium.merge(Tabular))
+                    }
+                }
+                if (shown.isEmpty()) item { Note("This account no longer exists.") }
+                items(shown, key = { it.name }) { UsageCard(nameOf(it.name), it, u.now, longest, zone, h24, open = userName != null) }
+                item {
+                    Text(
+                        "Time counts while the account is on the screen and unlocked. A locked screen, or an account left logged in " +
+                            "while someone else uses the computer, does not count. Today and yesterday are kept; older days are not.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 4.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun UsageCard(name: String, u: UserUsage, now: Long, longest: Int, zone: ZoneId, h24: Boolean, open: Boolean) {
+    val scheme = MaterialTheme.colorScheme
+    var logins by rememberSaveable(u.name) { mutableStateOf(open) }
+    Card {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Avatar(name, 44.dp)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(name, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(9.dp).clip(CircleShape).background(stateColor(u.state)))
+                    Spacer(Modifier.width(8.dp))
+                    Text(u.state.label, style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
+                }
+            }
+        }
+        val since = u.since
+        if (since != null) {
+            Spacer(Modifier.size(12.dp))
+            Text("Logged in since", style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
+            Text(formatMoment(since, zone, h24), style = MaterialTheme.typography.titleMedium.merge(Tabular))
+        }
+        if (u.empty) {
+            Spacer(Modifier.size(12.dp))
+            Text("Not used today or yesterday.", style = MaterialTheme.typography.bodyLarge, color = scheme.onSurfaceVariant)
+        } else {
+            Spacer(Modifier.size(16.dp))
+            u.today?.let { UseBar("Today", it, longest, LocalExtra.current.on) }
+            Spacer(Modifier.size(14.dp))
+            u.yesterday?.let { UseBar("Yesterday", it, longest, scheme.primary) }
+            Spacer(Modifier.size(14.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Since the computer was turned on", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
+                Text(formatDuration(u.bootUsed.toLong()), style = MaterialTheme.typography.titleSmall.merge(Tabular))
+            }
+            if (u.logins.isNotEmpty()) {
+                Spacer(Modifier.size(8.dp))
+                HorizontalDivider(color = scheme.onSurface.copy(alpha = 0.08f))
+                Row(
+                    Modifier.fillMaxWidth().clip(MaterialTheme.shapes.small).toggleable(logins, role = Role.Button) { logins = it }.heightIn(min = 48.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        if (u.logins.size == 1) "1 login" else "${u.logins.size} logins", Modifier.weight(1f),
+                        style = MaterialTheme.typography.titleSmall, color = scheme.onSurfaceVariant,
+                    )
+                    Icon(if (logins) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, if (logins) "Hide" else "Show", tint = scheme.onSurfaceVariant)
+                }
+                if (logins) u.logins.forEach { LoginRow(it, now, zone, h24) }
+            }
+        }
+    }
+}
+
+/** A day's time in use as a number and a bar; all bars share [longest] as their full width. */
+@Composable
+private fun UseBar(label: String, day: DayUse, longest: Int, color: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.titleSmall)
+            Text(formatDay(day.date), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Text(formatDuration(day.used.toLong()), style = MaterialTheme.typography.titleMedium.merge(Tabular))
+    }
+    Spacer(Modifier.size(6.dp))
+    Box(Modifier.fillMaxWidth().height(8.dp).clip(CircleShape).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))) {
+        val part = (day.used.toFloat() / longest).coerceIn(0f, 1f)
+        if (part > 0f) Box(Modifier.fillMaxWidth(part.coerceAtLeast(0.02f)).fillMaxHeight().clip(CircleShape).background(color))
+    }
+}
+
+@Composable
+private fun LoginRow(l: LoginSpan, now: Long, zone: ZoneId, h24: Boolean) {
+    val scheme = MaterialTheme.colorScheme
+    val length = formatDuration((l.end ?: now) - l.start)
+    Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.Top) {
+        Box(Modifier.padding(top = 7.dp).size(9.dp).clip(CircleShape).background(if (l.end == null) LocalExtra.current.on else scheme.onSurface.copy(alpha = 0.18f)))
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(formatMoment(l.start, zone, h24), style = MaterialTheme.typography.bodyLarge.merge(Tabular))
+            Text(
+                if (l.end == null) "Still logged in · $length so far" else "Logged out " + formatSince(l.end, l.start, zone, h24) + " · $length",
+                style = MaterialTheme.typography.bodyMedium.merge(Tabular), color = scheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
