@@ -1,0 +1,11 @@
+.toolchain/
+.dry/
+logs/
+__pycache__/
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.kotlin/
+*.jks
+Initial Prompt.txt

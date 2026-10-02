@@ -1,0 +1,12 @@
+[Unit]
+Description=Curfew agent (lets a paired phone see and control this computer)
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /usr/local/lib/curfew/curfew.py serve
+Restart=always
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target

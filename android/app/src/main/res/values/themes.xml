@@ -1,0 +1,9 @@
+<resources>
+    <color name="page">#F2F2F7</color>
+    <color name="icon_top">#2E3690</color>
+    <color name="icon_bottom">#141842</color>
+    <color name="icon_mark">#FFE3A1</color>
+    <style name="Theme.Curfew" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/page</item>
+    </style>
+</resources>

@@ -1,0 +1,11 @@
+{"name": "kids-laptop",
+ "users": [
+  {"name": "dad", "full": "Dad", "admin": true, "state": "none"},
+  {"name": "classes", "full": "Ali (classes)", "admin": false, "state": "locked"},
+  {"name": "gaming", "full": "Ali (gaming)", "admin": false, "state": "active"}],
+ "apps": {"gaming": [
+  {"name": "Minecraft", "detail": "java -Xmx4G -jar /home/gaming/Downloads/TLauncher-2.923.jar", "age": 340, "terminal": true},
+  {"name": "Firefox", "detail": "", "age": 1260, "terminal": false},
+  {"name": "Discord", "detail": "", "age": 1300, "terminal": false},
+  {"name": "Terminal", "detail": "", "age": 4000, "terminal": false}],
+  "classes": [{"name": "LibreOffice Writer", "detail": "", "age": 7300, "terminal": false}]}}

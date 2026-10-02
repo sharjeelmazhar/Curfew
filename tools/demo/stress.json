@@ -1,0 +1,23 @@
+{"name": "the-extremely-long-hostname-of-the-second-laptop-in-the-living-room",
+ "users": [
+  {"name": "dad", "full": "Muhammad Abdul-Rahman ibn Khalid al-Farouqi the Administrator", "admin": true, "state": "logged_in"},
+  {"name": "u1", "full": "Sara", "admin": false, "state": "active"},
+  {"name": "u2", "full": "", "admin": false, "state": "none"},
+  {"name": "u3", "full": "Guest account with a very long descriptive name indeed", "admin": false, "state": "locked"},
+  {"name": "u4", "full": "Homework", "admin": false, "state": "none"},
+  {"name": "u5", "full": "Gaming", "admin": false, "state": "none"},
+  {"name": "u6", "full": "Grandma", "admin": false, "state": "none"},
+  {"name": "u7", "full": "Visitor", "admin": false, "state": "none"}],
+ "apps": {"u1": [
+  {"name": "a-very-long-program-name-without-any-spaces-that-goes-on-and-on-forever.jar (Java)", "detail": "java -Xmx8G -XX:+UseG1GC -Dsome.very.long.property=value -jar /home/u1/Downloads/games/a-very-long-program-name-without-any-spaces.jar --fullscreen", "age": 30, "terminal": true},
+  {"name": "Firefox", "detail": "", "age": 200, "terminal": false},
+  {"name": "Files", "detail": "", "age": 300, "terminal": false},
+  {"name": "game.py (Python)", "detail": "python3 game.py", "age": 400, "terminal": true},
+  {"name": "Steam", "detail": "", "age": 500, "terminal": false},
+  {"name": "Discord", "detail": "", "age": 600, "terminal": false},
+  {"name": "VLC media player", "detail": "", "age": 700, "terminal": false},
+  {"name": "Text Editor", "detail": "", "age": 86400, "terminal": false},
+  {"name": "Calculator", "detail": "", "age": 190000, "terminal": false},
+  {"name": "Settings", "detail": "", "age": 200000, "terminal": false},
+  {"name": "Terminal", "detail": "", "age": 200001, "terminal": false},
+  {"name": "LibreOffice Impress", "detail": "", "age": 200002, "terminal": false}]}}
