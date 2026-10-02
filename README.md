@@ -78,7 +78,7 @@ The code works once, for one phone, and expires after two minutes, so a photo of
 
 - **Home screen:** one card per laptop. A glowing green power light means it is on; a dim one means off or out of reach. The line below says who is using it. If a countdown is running you see it here.
 - **Tap a laptop:** Shut down, Restart, the shut-down timer, and the list of accounts on that laptop with what each is doing (not logged in, logged in in the background, in use right now, screen locked). After "Switch user", both accounts are logged in and both are shown.
-- **Tap an account:** Log in without the password, Lock screen, Log out, the internet for that account, and what that person has open at the moment.
+- **Tap an account:** Log in without the password, Lock screen, Log out, a shut-down timer for the computer, the internet for that account, and what that person has open at the moment.
 - **The pencil** at the top of a laptop or an account gives it a name of your own ("Fatima's computer", "Gaming"). The name exists only in the app; nothing changes on the laptop.
 
 The timers are silent unless you turn on **Warn them first**, which shows a notice on the laptop when the timer starts and again one minute before the end.

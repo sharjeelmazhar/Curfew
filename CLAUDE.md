@@ -78,8 +78,13 @@ python3 agent/curfew.py --dry-run apps <user>          # what the phone would se
 
 ## State
 
-- Released: **1.1.5** (laptop side and app); `main` equals the release. App versionName 1.1.
+- Released: **1.1.6** (laptop side and app); `main` equals the release. App versionName 1.1.
   The app shows bundled logos for common apps (`Logos.kt`, `res/drawable-nodpi/logo_*.png`).
+  Each account's page has a "Shut down the computer" box above "Internet" (same timer layout).
+- A sister-in-law's Galaxy Note 8 (Android 9) runs a separate APK, never from GitHub: Samsung's
+  Android 9 fingerprint dialog needs an AppCompat theme, and the scanner module is fetched urgently.
+  Source on the local branch `note8-local`, APK in `logs/note8/`. The user chose not to ship these
+  in the generic app.
 - `TIMER_MIN_SECONDS` in `Models.kt` is **15, a testing value**. The user will ask for the final
   build: set it to `5 * 60` (max stays 6 h), rebuild, release the APK. Do not change it before then.
 - Installed and tested by the user on their own Ubuntu 26.04 desktop (wired) with a Redmi Note 11.
