@@ -134,6 +134,30 @@ data class Status(
 
 data class AppInfo(val name: String, val detail: String, val ageSeconds: Long, val terminal: Boolean)
 
+/** Words in an app's name and the logo that goes with them, most specific first. The logos are
+ *  pictures inside the app (res/drawable-nodpi/logo_<key>.png); an app not listed keeps a plain icon. */
+private val LOGO_RULES = listOf(
+    "libreoffice writer" to "libreoffice_writer", "libreoffice calc" to "libreoffice_calc",
+    "libreoffice impress" to "libreoffice_impress",
+    "chromium" to "chromium", "chrome" to "chrome", "firefox" to "firefox", "brave" to "brave",
+    "edge" to "edge", "opera" to "opera", "vivaldi" to "vivaldi",
+    "minecraft" to "minecraft", "tlauncher" to "minecraft", "prism launcher" to "prism",
+    "roblox" to "sober", "sober" to "sober", "steam" to "steam",
+    "discord" to "discord", "teams" to "teams", "zoom" to "zoom", "slack" to "slack", "skype" to "skype",
+    "telegram" to "telegram", "signal" to "signal", "thunderbird" to "thunderbird",
+    "spotify" to "spotify", "vlc" to "vlc", "obs" to "obs", "audacity" to "audacity",
+    "visual studio code" to "vscode", "vs code" to "vscode", "vscode" to "vscode",
+    "gimp" to "gimp", "gnu image manipulation" to "gimp", "krita" to "krita", "inkscape" to "inkscape",
+    "blender" to "blender", "ghostty" to "ghostty", "text editor" to "text",
+)
+
+/** The logo for an app or browser name ("Google Chrome" -> "chrome"), or null if there is none. */
+fun logoKey(name: String): String? {
+    val n = name.lowercase().trim()
+    if (n == "web" || n == "gnome web") return "epiphany"     // GNOME's browser is just called "Web"
+    return LOGO_RULES.firstOrNull { (word, _) -> Regex("\\b" + Regex.escape(word) + "\\b").containsMatchIn(n) }?.second
+}
+
 fun parseStatus(j: JSONObject): Status {
     val us = j.optJSONArray("users") ?: JSONArray()
     val t = j.optJSONObject("timer")
