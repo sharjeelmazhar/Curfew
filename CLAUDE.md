@@ -13,7 +13,7 @@ protocol in `API.md`. Read both before changing behaviour.
 | `agent/debian/` | package control file and maintainer scripts. `postinst` is where all system setup lives |
 | `agent/build-deb.sh`, `agent/VERSION` | builds `curfew_<version>_all.deb` |
 | `agent/install.sh`, `agent/uninstall.sh` | offline wrappers: build the same .deb and install it / purge it |
-| `agent/test_agent.py` | end-to-end tests against a dry-run agent (99 checks) |
+| `agent/test_agent.py` | end-to-end tests against a dry-run agent (115 checks) |
 | `android/` | the app: Kotlin, Jetpack Compose, minSdk 26. `Models.kt` and `Proto.kt` are plain JVM and unit-tested |
 | `tools/release.sh` | publishes the laptop side (apt folder to `gh-pages`, GitHub release) |
 | `tools/emu.sh`, `tools/demo/` | emulator helpers and dry-run demo agents with made-up users |
@@ -42,7 +42,7 @@ python3 agent/curfew.py --dry-run apps <user>          # what the phone would se
 
 - **Protocol:** plain HTTP on port 787, every message HMAC-signed with a per-phone key from
   QR pairing, one-time nonces against replay. Nothing is encrypted, so no secret may travel over
-  it. Status carries `caps` (`seconds`, `net`, `login`, `browsers`) so the app hides what an agent cannot do.
+  it. Status carries `caps` (`seconds`, `net`, `login`, `browsers`, `usage`) so the app hides what an agent cannot do.
 - **Timers:** wall-clock deadlines in `/var/lib/curfew/state.json`; `timer_loop` owns the
   shut-down countdown and the per-account internet countdowns.
 - **Internet per account:** iptables/ip6tables chain `CURFEW`, rules by uid, never for an admin
@@ -69,6 +69,15 @@ python3 agent/curfew.py --dry-run apps <user>          # what the phone would se
   the last `HISTORY_DAYS` (7) days, capped at `HISTORY_MAX` rows. In the app each page is tappable
   and opens in the phone's browser; the browser screen polls every 2 s so a new tab shows quickly.
   Private/incognito windows leave nothing on disk and are not shown.
+- **Screen time:** `usage_loop` looks at the accounts every 15 s (and on every `status`/`usage`
+  call) and adds the time since the last look to whoever is logged in (`on`) and to whoever is on
+  the screen unlocked (`used`). Totals per day (today and yesterday only), per boot, and the logins
+  with start and end live in `/var/lib/curfew/usage.json`, written at most once a minute and on
+  SIGTERM. The interval is measured with `time.monotonic`, which stands still during suspend. Login
+  times come from logind's session `Timestamp`. In the app: `UsageScreen` (all accounts, or one),
+  a "Screen time" box on each account's page, "Logged in since … · Used … today" under each account.
+  The dot of an account left in the background (`logged_in`) is orange (`Extra.away`), and names in
+  the "who is using it" line are bold (`bold()` in `Models.kt`, `boldNames()` in `Ui.kt`).
 - **App:** locked behind `BiometricPrompt` (`Lock.kt`) every time it comes to the front; fingerprint
   only when one is enrolled, screen lock otherwise. Login from the phone asks for the fingerprint
   again,
@@ -83,6 +92,9 @@ python3 agent/curfew.py --dry-run apps <user>          # what the phone would se
 - Released: **1.1.7** (laptop side and app); `main` equals the release. App versionName 1.1.
   The app shows bundled logos for common apps (`Logos.kt`, `res/drawable-nodpi/logo_*.png`).
   Each account's page has a "Shut down the computer" box above "Internet" (same timer layout).
+- Branch `screen-time` (laptop side 1.1.8, **not released**): screen time, the orange dot and bold
+  names. Built and on the user's Redmi; waiting for the user to install `dist/curfew_1.1.8_all.deb`
+  and test. The new app screens were never seen rendered (the emulator's screen PIN is not known).
 - A sister-in-law's Galaxy Note 8 (Android 9) runs a separate APK, never from GitHub: Samsung's
   Android 9 fingerprint dialog needs an AppCompat theme (base the theme on `Theme.AppCompat`, not
   `android:Theme.Material`), and the scanner module is fetched urgently (`getScannerReady` in
