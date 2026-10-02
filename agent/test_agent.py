@@ -130,6 +130,30 @@ check("an app running as its own service is named (Ghostty)", ids("/u/app.slice/
 check("autostart service ignored", ids("/a/app-gnome-foo\\x2dautostart@autostart.service") == [])
 check("QR too long is rejected cleanly", not hasattr(curfew, "x") and len(curfew.qr_matrix("a" * 106)) == 37)
 
+# --- screen time, one look at a time
+day = lambda t: time.strftime("%Y-%m-%d", time.localtime(t))
+noon = time.mktime((2026, 10, 2, 12, 0, 0, 0, 0, -1))
+kid = lambda state, **k: dict({"name": "kid", "state": state}, **k)
+d = {"users": {}}
+curfew.usage_step(d, [kid("active", since=noon - 300), {"name": "dad", "state": "none"}], noon, 0)
+check("a login is noted with the time logind gives", d["users"]["kid"]["logins"] == [[int(noon - 300), None]] and "dad" not in d["users"])
+curfew.usage_step(d, [kid("active")], noon + 15, 15)
+curfew.usage_step(d, [kid("locked")], noon + 30, 15)
+curfew.usage_step(d, [kid("logged_in")], noon + 45, 15)
+check("only time on the screen, unlocked, counts as use", d["users"]["kid"]["days"][day(noon)] == {"used": 15, "on": 45} and d["users"]["kid"]["boot"] == {"used": 15, "on": 45})
+curfew.usage_step(d, [kid("none")], noon + 60, 15)
+check("a logout ends the login", d["users"]["kid"]["logins"] == [[int(noon - 300), int(noon + 60)]])
+curfew.usage_step(d, [kid("active")], noon + 120, 15)
+curfew.usage_step(d, [kid("active")], noon + 135, 15)
+check("logging in again adds to the same day", d["users"]["kid"]["days"][day(noon)]["used"] == 45 and len(d["users"]["kid"]["logins"]) == 2)
+curfew.usage_step(d, [kid("active")], noon + 86400, 15)
+days = d["users"]["kid"]["days"]
+check("a new day starts from zero and keeps yesterday", days[day(noon + 86400)]["used"] == 15 and days[day(noon)]["used"] == 45)
+curfew.usage_step(d, [kid("active")], noon + 2 * 86400, 15)
+e = d["users"]["kid"]
+check("older days and their logins are forgotten", sorted(e["days"]) == [day(noon + 86400), day(noon + 2 * 86400)] and e["logins"] == [[int(noon + 120), None]])
+check("logind's time is read", curfew.stamp("Fri 2026-10-02 12:00:00 PKT") == int(noon) and curfew.stamp("") is None)
+
 agent = start()
 try:
     st, hello = http("GET", "/v1/hello")
@@ -299,6 +323,30 @@ try:
     agent.terminate(); agent.wait()
     agent = start(fake="kids")
     users = lambda: {u["name"]: u for u in call(a, "status")[1]["users"]}
+    # --- screen time (classes has its screen locked, gaming is in use, dad is not logged in)
+    began = int(time.time())
+    check("status says the agent keeps screen time", "usage" in call(a, "status")[1]["caps"])
+    u = users()
+    check("status says since when an account is logged in", abs(u["gaming"]["since"] - began) <= 5 and "since" not in u["dad"] and u["dad"]["today"] == 0)
+    time.sleep(2.2)
+    check("time in use shows in status", users()["gaming"]["today"] >= 2 and users()["classes"]["today"] == 0)
+    r = call(a, "usage")[1]
+    use = {x["name"]: x for x in r["users"]}
+    check("usage lists today and yesterday for every account", r["ok"] and set(use) == {"dad", "classes", "gaming"}
+          and [x["date"] for x in use["dad"]["days"]] == curfew.kept_days(time.time()) and abs(r["now"] - time.time()) <= 5 and r["boot"] > 0)
+    check("usage counts the account in use", use["gaming"]["days"][0]["used"] >= 2 and use["gaming"]["boot"]["used"] >= 2 and use["gaming"]["logins"][0]["end"] is None)
+    check("a locked screen is logged in but not in use", use["classes"]["days"][0] == dict(use["classes"]["days"][0], used=0) and use["classes"]["days"][0]["on"] >= 2)
+    check("an account that never logged in has nothing", use["dad"]["logins"] == [] and use["dad"]["days"][0]["used"] == 0)
+    agent.terminate(); agent.wait()
+    saved = json.load(open(TMP + "/usage.json"))
+    check("screen time is written when the agent stops", saved["users"]["gaming"]["boot"]["used"] >= 2 and oct(os.stat(TMP + "/usage.json").st_mode & 0o777) == "0o600")
+    saved["boot"] = "an earlier start of the computer"
+    json.dump(saved, open(TMP + "/usage.json", "w"))
+    agent = start(fake="kids")
+    use = {x["name"]: x for x in call(a, "usage")[1]["users"]}
+    check("after a restart of the computer the day's total stays and the rest starts again",
+          use["gaming"]["days"][0]["used"] >= 2 and use["gaming"]["boot"]["used"] < 2 and len(use["gaming"]["logins"]) == 2 and use["gaming"]["logins"][1]["end"] is not None)
+
     check("internet is on to begin with", all(u["net"] == "on" and "net_timer" not in u for u in users().values()))
     check("internet is never turned off for an admin", call(a, "net_set", user="dad", seconds=0)[1] == {"ok": False, "error": "is_admin"})
     check("internet for unknown account refused", call(a, "net_set", user="x", seconds=0)[1] == {"ok": False, "error": "bad_user"})

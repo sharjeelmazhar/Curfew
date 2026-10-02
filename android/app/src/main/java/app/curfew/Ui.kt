@@ -74,7 +74,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -84,10 +88,10 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
 
-/** Colours that Material's scheme has no role for. */
-class Extra(val page: Color, val card: Color, val on: Color, val onInk: Color)
+/** Colours that Material's scheme has no role for. [away]: logged in, but switched to the background. */
+class Extra(val page: Color, val card: Color, val on: Color, val onInk: Color, val away: Color)
 
-val LocalExtra = staticCompositionLocalOf { Extra(Color.White, Color.White, Color.Green, Color.White) }
+val LocalExtra = staticCompositionLocalOf { Extra(Color.White, Color.White, Color.Green, Color.White, Color(0xFFFF9800)) }
 
 @Composable
 fun CurfewTheme(content: @Composable () -> Unit) {
@@ -99,8 +103,8 @@ fun CurfewTheme(content: @Composable () -> Unit) {
         else -> lightColorScheme(primary = Color(0xFF4355B9), secondaryContainer = Color(0xFFDEE0FF), tertiary = Color(0xFF77536D))
     }
     // Grey page with lighter cards, as in the phone's own settings screens.
-    val extra = if (dark) Extra(scheme.surfaceContainerLowest, scheme.surfaceContainerHigh, Color(0xFF3DDC84), Color(0xFF00210F))
-    else Extra(scheme.surfaceContainer, scheme.surfaceContainerLowest, Color(0xFF1DA85B), Color.White)
+    val extra = if (dark) Extra(scheme.surfaceContainerLowest, scheme.surfaceContainerHigh, Color(0xFF3DDC84), Color(0xFF00210F), Color(0xFFFFA63D))
+    else Extra(scheme.surfaceContainer, scheme.surfaceContainerLowest, Color(0xFF1DA85B), Color.White, Color(0xFFE8820C))
     val base = Typography()
     val type = base.copy(
         headlineMedium = base.headlineMedium.copy(fontSize = 32.sp, lineHeight = 40.sp),
@@ -183,6 +187,21 @@ fun SectionLabel(text: String) {
         text, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(start = 12.dp, top = 12.dp, end = 12.dp),
     )
+}
+
+/** A sentence from Models.kt with the names marked by [bold], shown with those names in bold. */
+@Composable
+fun boldNames(text: String): AnnotatedString {
+    val strong = SpanStyle(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+    return buildAnnotatedString {
+        text.split(BOLD_ON).forEachIndexed { i, part ->
+            if (i == 0 || BOLD_OFF !in part) append(part)
+            else {
+                withStyle(strong) { append(part.substringBefore(BOLD_OFF)) }
+                append(part.substringAfter(BOLD_OFF))
+            }
+        }
+    }
 }
 
 enum class Lamp { ON, OFF, WARN }
