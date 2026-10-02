@@ -53,7 +53,7 @@ Copy the `agent` folder onto the laptop (a USB stick is fine), open it in the fi
 2. Tap the file on the phone. Android asks whether to allow installing from this source: choose **Settings**, switch on **Allow from this source**, go back and tap **Install**.
 3. If Google Play Protect says it does not recognise the app, tap **More details**, then **Install anyway**. This appears because the app is not from the Play Store.
 
-The app asks for your fingerprint every time it is opened, so a child who picks up your unlocked phone cannot use it. It uses the fingerprint already set up on the phone; there is nothing to configure. (A phone without a fingerprint asks for its screen lock instead.)
+The app asks for your fingerprint every time it is opened, so a child who picks up your unlocked phone cannot use it. It uses the fingerprint already set up on the phone; there is nothing to configure. (A phone without a fingerprint asks for its screen lock instead.) It asks again before a computer is removed from the app, so someone you hand the open app to cannot remove one.
 
 ## 3. Pair the phone with a laptop
 
