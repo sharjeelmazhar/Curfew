@@ -571,39 +571,61 @@ def _newest_profile(home, spec):
     return best and best[1:]
 
 
-def _firefox(profile, db):
+def _running(uid, needles):
+    """Is a program whose name contains one of [needles] running for this account?
+    Used so that "open now" is empty once the browser has been closed."""
+    for name in os.listdir("/proc"):
+        if not name.isdigit():
+            continue
+        try:
+            if os.stat("/proc/" + name).st_uid != uid:
+                continue
+            with open("/proc/" + name + "/comm") as f:
+                comm = f.read().strip().lower()
+        except OSError:
+            continue
+        if any(n in comm for n in needles):
+            return True
+    return False
+
+
+def _firefox(profile, db, uid):
     since = int((time.time() - HISTORY_DAYS * 86400) * 1_000_000)   # microseconds since the epoch
     rows = _snapshot_rows(db, "select url, title, last_visit_date from moz_places "
                               "where last_visit_date is not null and hidden = 0 and last_visit_date >= ? "
                               "order by last_visit_date desc limit ?", (since, HISTORY_MAX))
     recent = [_entry(u, t, (d or 0) / 1_000_000) for u, t, d in rows if _host(u)]
     tabs = []
-    for name in ("sessionstore-backups/recovery.jsonlz4", "sessionstore-backups/recovery.baklz4",
-                 "sessionstore-backups/previous.jsonlz4", "sessionstore.jsonlz4"):
-        data = _mozlz4(os.path.join(profile, name))
-        if not isinstance(data, dict):
-            continue
-        for win in data.get("windows", []):
-            for tab in win.get("tabs", []):
-                entries = tab.get("entries", [])
-                idx = tab.get("index", len(entries))
-                if entries and 1 <= idx <= len(entries):
-                    e = entries[idx - 1]
-                    url = e.get("url", "")
-                    if _host(url) and not url.startswith("about:"):
-                        tabs.append(_entry(url, e.get("title", ""), (tab.get("lastAccessed") or 0) / 1000))
-        break
+    # Only the live session file, and only while Firefox is actually running: previous.jsonlz4 and
+    # sessionstore.jsonlz4 are earlier sessions, not what is open now.
+    if _running(uid, ("firefox",)):
+        for name in ("sessionstore-backups/recovery.jsonlz4", "sessionstore-backups/recovery.baklz4"):
+            data = _mozlz4(os.path.join(profile, name))
+            if not isinstance(data, dict):
+                continue
+            for win in data.get("windows", []):
+                for tab in win.get("tabs", []):
+                    entries = tab.get("entries", [])
+                    idx = tab.get("index", len(entries))
+                    if entries and 1 <= idx <= len(entries):
+                        e = entries[idx - 1]
+                        url = e.get("url", "")
+                        if _host(url) and not url.startswith("about:"):
+                            tabs.append(_entry(url, e.get("title", ""), (tab.get("lastAccessed") or 0) / 1000))
+            break
+        tabs.sort(key=lambda e: -e["when"])     # the tab seen most recently first
     return tabs, recent
 
 
-def _chromium(profile, db):
+def _chromium(profile, db, uid):
     since = int((time.time() - HISTORY_DAYS * 86400 + 11644473600) * 1_000_000)   # Chrome counts microseconds from 1601
     rows = _snapshot_rows(db, "select u.url, u.title, u.last_visit_time, k.term "
                               "from urls u left join keyword_search_terms k on k.url_id = u.id "
                               "where u.last_visit_time >= ? order by u.last_visit_time desc limit ?", (since, HISTORY_MAX))
     recent = [_entry(u, t, v / 1_000_000 - 11644473600, s or "") for u, t, v, s in rows if _host(u)]
     now = time.time()
-    tabs = [e for e in recent if now - e["when"] < OPEN_WINDOW]     # no readable tab list; the last minute or two stand in
+    # No readable tab list; the last minute or two of history stands in, and only while it runs.
+    tabs = [e for e in recent if now - e["when"] < OPEN_WINDOW] if _running(uid, ("chrome", "chromium")) else []
     return tabs, recent
 
 
@@ -629,7 +651,7 @@ def browser_activity(user):
         profile, db = found
         reader = _firefox if spec["kind"] == "firefox" else _chromium
         try:
-            tabs, recent = reader(profile, db)
+            tabs, recent = reader(profile, db, user["uid"])
         except Exception as e:
             log("browser %s read failed: %r" % (spec["id"], e))
             tabs, recent = [], []
