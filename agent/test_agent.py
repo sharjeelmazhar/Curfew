@@ -126,6 +126,7 @@ ids = curfew.unit_app_ids
 check("gnome app scope parsed", ids("/user.slice/u/app.slice/app-gnome-org.gnome.Nautilus-123.scope")[-1] == "org.gnome.Nautilus")
 check("escaped id parsed", "google-chrome" in ids("/a/app-gnome-google\\x2dchrome-99.scope"))
 check("snap scope parsed", ids("/a/snap.firefox.firefox-0b6d2f0e-1111-2222-3333-444455556666.scope")[0] == "firefox_firefox")
+check("an app running as its own service is named (Ghostty)", ids("/u/app.slice/app-com.mitchellh.ghostty.service") == ["com.mitchellh.ghostty"])
 check("autostart service ignored", ids("/a/app-gnome-foo\\x2dautostart@autostart.service") == [])
 check("QR too long is rejected cleanly", not hasattr(curfew, "x") and len(curfew.qr_matrix("a" * 106)) == 37)
 
@@ -247,6 +248,44 @@ try:
     call(a, "lock", user=me)
     check("locking takes the approval back", not os.path.exists(token))
     check("login for unknown account refused", call(a, "login", user="root")[1] == {"ok": False, "error": "bad_user"})
+
+    # --- the typed login password is remembered, to unlock the keyring after a login from the phone
+    keep = lambda user, text, kind="auth": subprocess.run([sys.executable, HERE + "/curfew.py", "pam-remember"], input=text,
+                                                         env=dict(ENV, PAM_USER=user, PAM_TYPE=kind)).returncode
+    kept = lambda: json.load(open(TMP + "/passwords.json")) if os.path.exists(TMP + "/passwords.json") else {}
+    check("a password for an unknown account is not kept", keep("root", b"x\0") == 1 and kept() == {})
+    check("nothing is kept outside a login", keep(me, b"x\0", "account") == 1 and kept() == {})
+    check("a typed password is kept", keep(me, "pässword one\0".encode()) == 0 and kept() == {me: "pässword one"})
+    check("a newer one replaces it", keep(me, b"two") == 0 and kept() == {me: "two"})
+    check("kept passwords are private", oct(os.stat(TMP + "/passwords.json").st_mode & 0o777) == "0o600")
+    call(a, "login", user=me)
+    time.sleep(0.5)
+    LOG.flush()
+    check("a login from the phone unlocks the keyring", "would unlock the keyring of " + me in open(TMP + "/agent.log").read())
+    if shutil.which("gnome-keyring-daemon") and shutil.which("dbus-run-session") and shutil.which("gdbus"):
+        # a real keyring service in a throw-away home: locked at start, as after a login without a password
+        kr = tempfile.mkdtemp(prefix="k", dir="/tmp")       # short: socket paths have a length limit
+        script = """
+            q() { gdbus call --session --dest org.freedesktop.secrets --object-path /org/freedesktop/secrets/collection/login \\
+                  --method org.freedesktop.DBus.Properties.Get org.freedesktop.Secret.Collection Locked 2>/dev/null | tr -d '\\n'; }
+            gnome-keyring-daemon --foreground --components=secrets --control-directory=$XDG_RUNTIME_DIR/keyring >/dev/null 2>&1 & D=$!
+            sleep 1.5
+            printf 'first' | %(py)s %(here)s/curfew.py keyring $XDG_RUNTIME_DIR/keyring/control; echo "new:$? $(q)"
+            kill $D; wait $D 2>/dev/null
+            gnome-keyring-daemon --foreground --components=secrets --control-directory=$XDG_RUNTIME_DIR/keyring >/dev/null 2>&1 & D=$!
+            sleep 1.5; echo "start:$(q)"
+            printf 'wrong' | %(py)s %(here)s/curfew.py keyring $XDG_RUNTIME_DIR/keyring/control; echo "wrong:$? $(q)"
+            printf 'first' | %(py)s %(here)s/curfew.py keyring $XDG_RUNTIME_DIR/keyring/control; echo "right:$? $(q)"
+            kill $D; wait $D 2>/dev/null
+        """ % {"py": sys.executable, "here": HERE}
+        os.makedirs(kr + "/run", mode=0o700); os.makedirs(kr + "/home")
+        out = subprocess.run(["dbus-run-session", "--", "sh", "-c", script], capture_output=True, text=True, timeout=60,
+                             env={"PATH": os.environ["PATH"], "HOME": kr + "/home", "XDG_RUNTIME_DIR": kr + "/run"}).stdout
+        shutil.rmtree(kr, ignore_errors=True)
+        check("keyring of a new account is created unlocked", "new:0 (<false>,)" in out)
+        check("keyring is locked after a login without the password", "start:(<true>,)" in out)
+        check("a wrong remembered password leaves it locked", "wrong:1 (<true>,)" in out)
+        check("the remembered password unlocks it", "right:0 (<false>,)" in out)
 
     # --- internet per account (made-up accounts: dad is admin, gaming and classes are not)
     agent.terminate(); agent.wait()

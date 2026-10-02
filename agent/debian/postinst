@@ -6,6 +6,7 @@ set -e
 PORT=787
 PY=/usr/lib/curfew/curfew.py
 HOOK="auth\tsufficient\tpam_exec.so quiet /usr/bin/python3 $PY pam-login"
+KEEP="auth\toptional\tpam_exec.so quiet expose_authtok /usr/bin/python3 $PY pam-remember"
 
 # Installed earlier from the folder with install.sh (before there was a package): same
 # data in /var/lib/curfew, but the program lived under /usr/local.
@@ -37,15 +38,17 @@ fi
 # Logging in from the phone: the login screen asks Curfew whether a phone approved this login
 # before it asks for the password ("curfew pam-login"). Only the login screen is touched, not
 # sudo or the text console. If the line cannot be added, passwords simply work as before.
+# A second line, after the password check, hands a typed and accepted password to
+# "curfew pam-remember": a later login from the phone uses it to unlock the account's keyring.
 PAMF=/etc/pam.d/gdm-password
 if [ ! -f "$PAMF" ] || [ -z "$(find /usr/lib -name pam_exec.so 2>/dev/null | head -n 1)" ]; then
   echo "Curfew: this is not the GNOME login screen, so logging in from the phone is not available here."
 else
   tmp="$(mktemp)"
-  grep -v 'curfew\.py pam-login' "$PAMF" > "$tmp" || true      # drop a line left by an older version
+  grep -v 'curfew\.py pam-' "$PAMF" > "$tmp" || true           # drop lines left by an older version
   lines="$(wc -l < "$tmp")"
-  awk -v hook="$HOOK" '!done && /^@include[[:space:]]+common-auth/ { print hook; done = 1 } { print }' "$tmp" > "$tmp.new"
-  if [ "$(grep -c 'curfew\.py pam-login' "$tmp.new")" = 1 ] && [ "$(wc -l < "$tmp.new")" = "$((lines + 1))" ]; then
+  awk -v hook="$HOOK" -v keep="$KEEP" '!done && /^@include[[:space:]]+common-auth/ { print hook; print; print keep; done = 1; next } { print }' "$tmp" > "$tmp.new"
+  if [ "$(grep -c 'curfew\.py pam-' "$tmp.new")" = 2 ] && [ "$(wc -l < "$tmp.new")" = "$((lines + 2))" ]; then
     cmp -s "$tmp.new" "$PAMF" || cat "$tmp.new" > "$PAMF"     # cat keeps the owner and permissions of the file
   else
     echo "Curfew: could not set up logging in from the phone (unexpected $PAMF); everything else works."
@@ -54,10 +57,13 @@ else
 fi
 
 # Only administrators may change the network: joining another Wi-Fi, typing a new Wi-Fi password,
-# editing or deleting a connection, turning Wi-Fi or networking off. Everyone else is asked for an
-# administrator's password, in the desktop and in a terminal alike. Saved networks still connect
-# by themselves. Without this, a child could move the computer to a neighbour's Wi-Fi, out of the
-# phone's reach.
+# editing or deleting a connection, turning Wi-Fi or networking off. For everyone else these are
+# refused, in the desktop and in a terminal alike; the administrator makes the change from their
+# own account. Saved networks still connect by themselves. Without this, a child could move the
+# computer to a neighbour's Wi-Fi, out of the phone's reach.
+# Refused rather than "ask for an administrator's password": the desktop's own menu waits for the
+# answer in a way that freezes the whole screen for 25 seconds before the password window shows,
+# and nobody should have to type the administrator's password in a child's account anyway.
 if [ -d /etc/polkit-1/rules.d ]; then
   cat > /etc/polkit-1/rules.d/10-curfew-network.rules <<'RULES'
 // Installed by Curfew: only administrators may change the network. Remove this file to undo.
@@ -65,7 +71,7 @@ polkit.addRule(function(action, subject) {
     if (action.id.indexOf("org.freedesktop.NetworkManager.") == 0 &&
         action.id != "org.freedesktop.NetworkManager.wifi.scan" &&
         subject.user != "root" && !subject.isInGroup("sudo") && !subject.isInGroup("admin")) {
-        return polkit.Result.AUTH_ADMIN;
+        return polkit.Result.NO;
     }
 });
 RULES
@@ -75,12 +81,12 @@ if [ -d /etc/polkit-1/localauthority/50-local.d ]; then      # Ubuntu 22.04 and 
   NM=org.freedesktop.NetworkManager
   ACTIONS="$NM.network-control;$NM.enable-disable-network;$NM.enable-disable-wifi;$NM.enable-disable-wwan;$NM.enable-disable-wimax;$NM.settings.modify.own;$NM.settings.modify.system;$NM.settings.modify.hostname;$NM.settings.modify.global-dns;$NM.wifi.share.open;$NM.wifi.share.protected;$NM.reload;$NM.checkpoint-rollback;$NM.enable-disable-connectivity-check;$NM.enable-disable-statistics"
   cat > /etc/polkit-1/localauthority/50-local.d/curfew-network.pkla <<PKLA
-[Curfew: changing the network needs an administrator's password]
+[Curfew: only administrators change the network]
 Identity=unix-user:*
 Action=$ACTIONS
-ResultAny=auth_admin
-ResultInactive=auth_admin
-ResultActive=auth_admin
+ResultAny=no
+ResultInactive=no
+ResultActive=no
 
 [Curfew: administrators keep control of the network]
 Identity=unix-user:root;unix-group:sudo;unix-group:admin
@@ -102,19 +108,22 @@ if [ -d /run/systemd/system ]; then
 fi
 
 # Wi-Fi must be usable before anyone logs in, or the phone cannot reach the login screen.
+# Only the network in use right now matters; other saved networks are left alone and not mentioned.
 if command -v nmcli >/dev/null; then
-  nmcli -t -f NAME,TYPE connection show 2>/dev/null | grep ':802-11-wireless$' | sed 's/:802-11-wireless$//' |
-  while IFS= read -r name; do
-    perms="$(nmcli -g connection.permissions connection show "$name" 2>/dev/null || true)"
-    flags="$(nmcli -g 802-11-wireless-security.psk-flags connection show "$name" 2>/dev/null || true)"
+  nmcli -t -f UUID,TYPE connection show --active 2>/dev/null | grep ':802-11-wireless$' | cut -d: -f1 |
+  while IFS= read -r uuid; do
+    name="$(nmcli -g connection.id connection show "$uuid" 2>/dev/null || true)"
+    perms="$(nmcli -g connection.permissions connection show "$uuid" 2>/dev/null || true)"
+    flags="$(nmcli -g 802-11-wireless-security.psk-flags connection show "$uuid" 2>/dev/null || true)"
     if [ -n "$perms" ] || { [ -n "$flags" ] && [ "$flags" != 0 ]; }; then
       echo
-      echo "WARNING: the Wi-Fi network \"$name\" is only available to one user, so this computer"
-      echo "has no network at the login screen or in the other accounts. To fix it, run:"
+      echo "WARNING: the Wi-Fi network \"$name\" is saved for one account only, so this computer"
+      echo "has no network at the login screen or in the other accounts, and the phone cannot reach it"
+      echo "there. To fix it, run this once:"
       echo "  sudo nmcli connection modify \"$name\" connection.permissions \"\" 802-11-wireless-security.psk-flags 0"
       echo "(if it then asks for the Wi-Fi password again, enter it once from the admin account)"
     fi
-  done || true      # no Wi-Fi connections at all is fine
+  done || true      # no Wi-Fi in use (a cable, for example) is fine
 fi
 
 if [ -z "$2" ]; then echo "To pair a phone run:  sudo curfew pair"; fi
