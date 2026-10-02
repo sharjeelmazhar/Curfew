@@ -5,7 +5,7 @@ One file, standard library only, Python 3.10+. It is both the root daemon
 ("curfew serve", started by systemd) and the admin command ("sudo curfew pair",
 "sudo curfew phones", "sudo curfew unpair NAME", "curfew status"), and the
 helper that the login screen asks about a login approved from a phone
-("curfew pam-login", see install.sh).
+("curfew pam-login", see debian/postinst).
 
 It performs only the fixed actions in OPS below; there is no way to make it run
 an arbitrary command. The wire protocol is described in API.md.
@@ -575,7 +575,7 @@ def host_name():
 
 
 def login_hook():
-    """Is the login screen set up (by install.sh) to ask us about approved logins?"""
+    """Is the login screen set up (by the package's postinst) to ask us about approved logins?"""
     if DRY:
         return True
     with contextlib.suppress(OSError):

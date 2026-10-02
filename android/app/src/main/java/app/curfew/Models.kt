@@ -244,6 +244,6 @@ fun errorText(error: String): String = when (error) {
     "bad_user" -> "That account no longer exists"
     "is_admin" -> "The internet is never turned off for an admin account"
     "unsupported" -> "That computer cannot do this"
-    "bad_op", "bad_args" -> "Curfew on that computer is too old for this. Run “sudo ./install.sh” on it again."
+    "bad_op", "bad_args" -> "Curfew on that computer is too old for this. Update it there: sudo apt update && sudo apt upgrade"
     else -> "The computer could not do that"
 }

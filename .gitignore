@@ -9,3 +9,5 @@ android/local.properties
 android/.kotlin/
 *.jks
 Initial Prompt.txt
+.apt-key/
+dist/
