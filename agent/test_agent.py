@@ -154,6 +154,46 @@ e = d["users"]["kid"]
 check("older days and their logins are forgotten", sorted(e["days"]) == [day(noon + 86400), day(noon + 2 * 86400)] and e["logins"] == [[int(noon + 120), None]])
 check("logind's time is read", curfew.stamp("Fri 2026-10-02 12:00:00 PKT") == int(noon) and curfew.stamp("") is None)
 
+# --- the Wi-Fi stays on (a made-up /sys/class/rfkill; nothing real is touched)
+rf = tempfile.mkdtemp(prefix="curfew-rfkill-")
+KID = __import__("pwd").getpwuid(os.getuid()).pw_name       # must exist: its session bus is looked up
+def radio(n, kind, soft):
+    os.makedirs("%s/rfkill%d" % (rf, n), exist_ok=True)
+    for name, text in (("type", kind), ("soft", soft)):
+        with open("%s/rfkill%d/%s" % (rf, n, name), "w") as f:
+            f.write(text + "\n")
+soft = lambda n: open("%s/rfkill%d/soft" % (rf, n)).read().strip()
+real = (curfew.RFKILL_DIR, curfew.sessions, curfew.human_users, curfew.act, curfew.notify, curfew.DRY)
+did, told = [], []
+curfew.RFKILL_DIR, curfew.DRY = rf, False
+curfew.human_users = lambda: [{"name": "dad", "admin": True}, {"name": KID, "admin": False}]
+curfew.act = lambda what, argv: did.append(argv) or True
+curfew.notify = lambda text, only=None: told.append(only)
+front = lambda user: [{"id": "7", "user": user, "graphical": True, "active": True, "locked": False, "since": None}]
+radio(0, "bluetooth", "1"); radio(1, "wlan", "0")
+curfew.sessions = lambda: front(KID)
+check("Wi-Fi that is on is left alone, and so is Bluetooth", curfew.keep_wifi_on([], 0) is False and soft(0) == "1" and did == [])
+radio(1, "wlan", "1")
+curfew.sessions = lambda: front("dad")
+check("an administrator may use airplane mode", curfew.keep_wifi_on([], 0) is False and soft(1) == "1")
+curfew.sessions = lambda: front(KID)
+strikes = []
+check("airplane mode in a standard account is undone", curfew.keep_wifi_on(strikes, 10) is True and soft(1) == "0" and soft(0) == "1" and told == [KID])
+check("the first time only turns the Wi-Fi back on", not any("lock-session" in a for a in did))
+radio(1, "wlan", "1"); curfew.keep_wifi_on(strikes, 20)
+radio(1, "wlan", "1"); curfew.keep_wifi_on(strikes, 30)
+check("switching it off again and again locks the screen", ["loginctl", "lock-session", "7"] in did and strikes == [] and soft(1) == "0")
+check("the account's own 'never lock' setting is put back before locking",
+      any(a[-4:] == ["set", "org.gnome.desktop.lockdown", "disable-lock-screen", "false"] and a[:3] == ["runuser", "-u", KID] for a in did))
+del did[:]
+radio(1, "wlan", "1"); curfew.keep_wifi_on(strikes, 400); radio(1, "wlan", "1"); curfew.keep_wifi_on(strikes, 500); radio(1, "wlan", "1"); curfew.keep_wifi_on(strikes, 600)
+check("now and then over a long time does not lock", not any("lock-session" in a for a in did))
+radio(1, "wlan", "1")
+curfew.sessions = lambda: []
+check("airplane mode at the login screen is undone too", curfew.keep_wifi_on([], 0) is True and soft(1) == "0")
+curfew.RFKILL_DIR, curfew.sessions, curfew.human_users, curfew.act, curfew.notify, curfew.DRY = real
+shutil.rmtree(rf, ignore_errors=True)
+
 agent = start()
 try:
     st, hello = http("GET", "/v1/hello")

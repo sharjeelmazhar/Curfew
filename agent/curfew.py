@@ -805,6 +805,17 @@ def human(seconds):
     return " ".join(parts)
 
 
+def lock_screen(s):
+    """Lock one desktop session. GNOME ignores the request when the account has set its own
+    'never lock the screen' (org.gnome.desktop.lockdown), so that is put back first."""
+    with contextlib.suppress(KeyError):
+        uid = pwd.getpwnam(s["user"]).pw_uid
+        act("let the screen of %s be locked" % s["user"],
+            ["runuser", "-u", s["user"], "--", "env", "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%d/bus" % uid,
+             "gsettings", "set", "org.gnome.desktop.lockdown", "disable-lock-screen", "false"])
+    return act("lock the screen of " + s["user"], ["loginctl", "lock-session", s["id"]])
+
+
 def notify(text, only=None):
     """Show a notice to everyone with a desktop session, or to one user."""
     for s in sessions():
@@ -870,6 +881,69 @@ def net_sync():
         log("firewall error: %r" % e)
         return False
     return ok
+
+
+# -------------------------------------------------------------- Wi-Fi stays on
+
+RFKILL_DIR = "/sys/class/rfkill"
+RADIO_TICK = 2                  # seconds between looks at the Wi-Fi switch
+RADIO_STRIKES = 3               # switched off this often within RADIO_WINDOW seconds: the screen is locked
+RADIO_WINDOW = 120
+
+
+def wifi_switched_off():
+    """The Wi-Fi radios that are switched off in software, which is what airplane mode does.
+    A switch on the laptop's case ('hard') is not listed: nothing can undo that from here."""
+    out = []
+    for d in sorted(glob.glob(RFKILL_DIR + "/rfkill*")):
+        with contextlib.suppress(OSError):
+            with open(d + "/type") as t, open(d + "/soft") as s:
+                if t.read().strip() == "wlan" and s.read().strip() == "1":
+                    out.append(d + "/soft")
+    return out
+
+
+def keep_wifi_on(strikes, now):
+    """Airplane mode does not go through NetworkManager, so the network lock cannot refuse it,
+    and with the Wi-Fi off the phone cannot reach this computer. Unless an administrator is the
+    one on the screen, turn it back on. Someone who keeps switching it off gets a locked screen."""
+    off = wifi_switched_off()
+    if not off:
+        return False
+    admins = {u["name"] for u in human_users() if u["admin"]}
+    front = [s for s in sessions() if s["active"]]
+    if any(s["user"] in admins for s in front):
+        return False
+    who = ", ".join(s["user"] for s in front) or "nobody logged in"
+    if DRY:
+        log("would turn the Wi-Fi back on (%s on the screen)" % who)
+        return True
+    log("the Wi-Fi was switched off with %s on the screen: turning it back on" % who)
+    for path in off:
+        with contextlib.suppress(OSError):
+            with open(path, "w") as f:
+                f.write("0")
+    if shutil.which("nmcli"):
+        act("turn Wi-Fi on in NetworkManager", ["nmcli", "radio", "wifi", "on"])
+    strikes[:] = [t for t in strikes if now - t < RADIO_WINDOW] + [now]
+    for s in front:
+        notify("Airplane mode is not allowed on this account. The Wi-Fi was turned back on.", s["user"])
+    if len(strikes) >= RADIO_STRIKES:
+        del strikes[:]
+        for s in front:
+            if s["graphical"]:
+                lock_screen(s)
+    return True
+
+
+def radio_loop():
+    strikes = []
+    while True:
+        try:
+            keep_wifi_on(strikes, time.monotonic())
+        except Exception as e:
+            log("keeping the Wi-Fi on failed: %r" % e)
+        time.sleep(RADIO_TICK)
 
 
 # -------------------------------------------------------------------- timers
@@ -1083,9 +1157,9 @@ def op_lock(req, st):
     if not u:
         return {"ok": False, "error": "bad_user"}
     revoke_login(u["name"])
-    ids = [s["id"] for s in sessions() if s["user"] == u["name"] and s["graphical"]]
-    ok = bool(ids) and all([act("lock the screen of " + u["name"], ["loginctl", "lock-session", i]) for i in ids])
-    return {"ok": True} if ok else {"ok": False, "error": "not_logged_in" if not ids else "failed"}
+    mine = [s for s in sessions() if s["user"] == u["name"] and s["graphical"]]
+    ok = bool(mine) and all([lock_screen(s) for s in mine])
+    return {"ok": True} if ok else {"ok": False, "error": "not_logged_in" if not mine else "failed"}
 
 
 def op_logout(req, st):
@@ -1138,7 +1212,7 @@ def op_login(req, st):
         return {"ok": True, "how": "approved", "seconds": LOGIN_SECONDS}
     for s in live:                      # nobody else's open session is left behind unlocked
         if s["graphical"] and s["user"] != name:
-            act("lock the screen of " + s["user"], ["loginctl", "lock-session", s["id"]])
+            lock_screen(s)
     ok = (act("bring the session of %s to the screen" % name, ["loginctl", "activate", mine[0]])
           and act("unlock the screen of " + name, ["loginctl", "unlock-session", mine[0]]))
     return {"ok": True, "how": "unlocked", "seconds": LOGIN_SECONDS} if ok else {"ok": False, "error": "failed"}
@@ -1446,6 +1520,8 @@ def serve():
         log("Curfew agent %s listening on port %d" % (st["id"], PORT))
     threading.Thread(target=timer_loop, daemon=True).start()
     threading.Thread(target=usage_loop, daemon=True).start()
+    if not DRY:
+        threading.Thread(target=radio_loop, daemon=True).start()
 
     def stop(*_):
         raise KeyboardInterrupt
