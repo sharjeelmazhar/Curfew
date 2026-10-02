@@ -131,7 +131,7 @@ using the number (or the name) from the list. That phone can no longer control t
 
 ## Changing the Wi-Fi later
 
-After installing, only an admin account can change the network. To join a new Wi-Fi, log in to your admin account and connect as usual, or let a child pick the network and type your admin password when it asks. To give everyone that freedom back: `sudo rm /etc/polkit-1/rules.d/10-curfew-network.rules`.
+After installing, only an admin account can change the network. In the other accounts the network switches and settings simply do nothing; they do not ask for a password, so your password is never typed in a child's account. To join a new Wi-Fi, log in to your admin account and connect as usual; the network is then available in every account. To give everyone that freedom back: `sudo rm /etc/polkit-1/rules.d/10-curfew-network.rules`.
 
 ## After reinstalling Ubuntu on a laptop
 
@@ -158,7 +158,7 @@ It removes the service and everything it set up or stored, and the laptop is as 
 It is a remote control, not a lock. A determined child can still:
 
 - turn the laptop back on after you shut it down (lock or log out their account, or set the timer again)
-- cut the laptop off from the network with airplane mode, or by pulling the cable on a desktop; the app then shows **Off** and you cannot reach it, including for a timer you have not yet set (a timer that is already running still fires, it lives on the laptop). They can no longer join another Wi-Fi, type a new Wi-Fi password, forget a network or turn Wi-Fi off: the installer makes all of that ask for an administrator's password
+- cut the laptop off from the network with airplane mode, or by pulling the cable on a desktop; the app then shows **Off** and you cannot reach it, including for a timer you have not yet set (a timer that is already running still fires, it lives on the laptop). They can no longer join another Wi-Fi, type a new Wi-Fi password, forget a network, change the address or DNS, or turn Wi-Fi off: after installing, only an admin account can do any of that
 - start the laptop from a USB stick or another system if the firmware (BIOS) allows it
 - learn the admin password; anyone with it can remove Curfew
 - become administrator without any password by starting the laptop in recovery mode (hold Shift or press Esc while it starts). Only a password on the boot menu (GRUB) stops this

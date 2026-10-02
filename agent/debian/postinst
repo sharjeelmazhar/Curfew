@@ -57,10 +57,13 @@ else
 fi
 
 # Only administrators may change the network: joining another Wi-Fi, typing a new Wi-Fi password,
-# editing or deleting a connection, turning Wi-Fi or networking off. Everyone else is asked for an
-# administrator's password, in the desktop and in a terminal alike. Saved networks still connect
-# by themselves. Without this, a child could move the computer to a neighbour's Wi-Fi, out of the
-# phone's reach.
+# editing or deleting a connection, turning Wi-Fi or networking off. For everyone else these are
+# refused, in the desktop and in a terminal alike; the administrator makes the change from their
+# own account. Saved networks still connect by themselves. Without this, a child could move the
+# computer to a neighbour's Wi-Fi, out of the phone's reach.
+# Refused rather than "ask for an administrator's password": the desktop's own menu waits for the
+# answer in a way that freezes the whole screen for 25 seconds before the password window shows,
+# and nobody should have to type the administrator's password in a child's account anyway.
 if [ -d /etc/polkit-1/rules.d ]; then
   cat > /etc/polkit-1/rules.d/10-curfew-network.rules <<'RULES'
 // Installed by Curfew: only administrators may change the network. Remove this file to undo.
@@ -68,7 +71,7 @@ polkit.addRule(function(action, subject) {
     if (action.id.indexOf("org.freedesktop.NetworkManager.") == 0 &&
         action.id != "org.freedesktop.NetworkManager.wifi.scan" &&
         subject.user != "root" && !subject.isInGroup("sudo") && !subject.isInGroup("admin")) {
-        return polkit.Result.AUTH_ADMIN;
+        return polkit.Result.NO;
     }
 });
 RULES
@@ -78,12 +81,12 @@ if [ -d /etc/polkit-1/localauthority/50-local.d ]; then      # Ubuntu 22.04 and 
   NM=org.freedesktop.NetworkManager
   ACTIONS="$NM.network-control;$NM.enable-disable-network;$NM.enable-disable-wifi;$NM.enable-disable-wwan;$NM.enable-disable-wimax;$NM.settings.modify.own;$NM.settings.modify.system;$NM.settings.modify.hostname;$NM.settings.modify.global-dns;$NM.wifi.share.open;$NM.wifi.share.protected;$NM.reload;$NM.checkpoint-rollback;$NM.enable-disable-connectivity-check;$NM.enable-disable-statistics"
   cat > /etc/polkit-1/localauthority/50-local.d/curfew-network.pkla <<PKLA
-[Curfew: changing the network needs an administrator's password]
+[Curfew: only administrators change the network]
 Identity=unix-user:*
 Action=$ACTIONS
-ResultAny=auth_admin
-ResultInactive=auth_admin
-ResultActive=auth_admin
+ResultAny=no
+ResultInactive=no
+ResultActive=no
 
 [Curfew: administrators keep control of the network]
 Identity=unix-user:root;unix-group:sudo;unix-group:admin
