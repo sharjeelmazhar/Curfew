@@ -23,11 +23,14 @@ import re
 import secrets
 import shutil
 import socket
+import sqlite3
 import struct
 import subprocess
 import sys
+import tempfile
 import threading
 import time
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PROTO = 1
@@ -428,6 +431,212 @@ def open_apps(user):
     return sorted(apps.values(), key=lambda a: a["age"])[:15]
 
 
+# ----------------------------------------------------------- browser activity
+#
+# What sites each account has looked at, read as root straight from the
+# browser's own files. History (the sites visited, newest first) and the tabs
+# open right now. Private/incognito windows write nothing to disk, so they
+# never show up here. See API.md for the shape sent to the phone.
+
+RECENT_LIMIT = 15               # history rows kept per browser
+OPEN_WINDOW = 180               # Chrome has no readable tab list; "open now" is the last 3 minutes
+SEARCH_HOSTS = ("google.", "bing.", "duckduckgo.", "search.brave.", "ecosia.", "startpage.")
+
+# Each browser: where its profiles live under the account's home, and how to read them.
+# A snap and a .deb of the same browser keep their files in different places; we look in all.
+BROWSERS = [
+    {"id": "firefox", "name": "Firefox", "kind": "firefox", "db": "places.sqlite",
+     "roots": ["snap/firefox/common/.mozilla/firefox", ".mozilla/firefox",
+               "snap/firefox/common/.cache/mozilla/firefox"]},
+    {"id": "chrome", "name": "Google Chrome", "kind": "chromium", "db": "History",
+     "roots": [".config/google-chrome"]},
+    {"id": "chromium", "name": "Chromium", "kind": "chromium", "db": "History",
+     "roots": ["snap/chromium/common/chromium", ".config/chromium",
+               ".var/app/org.chromium.Chromium/config/chromium"]},
+]
+
+
+def _host(url):
+    """The site part of a URL, without the www., for showing and filtering."""
+    m = re.match(r"^[a-z][a-z0-9+.-]*://([^/?#]+)", url or "", re.I)
+    host = (m.group(1) if m else "").lower().split("@")[-1].split(":")[0]
+    return host[4:] if host.startswith("www.") else host
+
+
+def _search_term(url, host):
+    """If this is a search page, the words searched for; otherwise ''."""
+    if not any(host.startswith(s) or ("." + host).find("." + s) >= 0 for s in SEARCH_HOSTS):
+        return ""
+    try:
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+    except ValueError:
+        return ""
+    for key in ("q", "query", "p"):
+        if q.get(key):
+            return q[key][0][:200]
+    return ""
+
+
+def _lz4_block(src):
+    """Decompress one raw LZ4 block (what Firefox wraps in its mozLz4 files)."""
+    out = bytearray()
+    i, n = 0, len(src)
+    while i < n:
+        token = src[i]; i += 1
+        length = token >> 4
+        if length == 15:
+            while i < n:
+                b = src[i]; i += 1; length += b
+                if b != 255:
+                    break
+        out += src[i:i + length]; i += length
+        if i >= n:
+            break
+        off = src[i] | (src[i + 1] << 8); i += 2
+        if off == 0:
+            break
+        match = (token & 15) + 4
+        if (token & 15) == 15:
+            while i < n:
+                b = src[i]; i += 1; match += b
+                if b != 255:
+                    break
+        start = len(out) - off
+        for j in range(match):
+            out.append(out[start + j])
+    return bytes(out)
+
+
+def _mozlz4(path):
+    """The JSON inside a Firefox .jsonlz4 file, or None if it cannot be read."""
+    try:
+        with open(path, "rb") as f:
+            data = f.read(16 << 20)
+    except OSError:
+        return None
+    if data[:8] != b"mozLz40\0":
+        return None
+    try:
+        return json.loads(_lz4_block(data[12:]))
+    except (ValueError, IndexError):
+        return None
+
+
+def _snapshot_rows(db, sql):
+    """Run a read-only query against a copy of a browser database, so it works
+    even while the browser holds the original open. Returns [] on any trouble."""
+    tmp = tempfile.mkdtemp(prefix="curfew-br-")
+    try:
+        base = os.path.join(tmp, "db")
+        got = False
+        for suffix in ("", "-wal", "-shm"):
+            if os.path.exists(db + suffix):
+                try:
+                    shutil.copyfile(db + suffix, base + suffix)
+                    got = got or suffix == ""
+                except OSError:
+                    pass
+        if not got:
+            return []
+        conn = sqlite3.connect(base, timeout=3)
+        try:
+            return conn.execute(sql).fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return []
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _entry(url, title, when, search=""):
+    host = _host(url)
+    return {"url": url, "title": title or "", "host": host, "when": int(when),
+            "search": search or _search_term(url, host)}
+
+
+def _newest_profile(home, spec):
+    """The profile folder this account browses in: the one whose database was
+    touched most recently, across every place this browser might keep it."""
+    best = None
+    for root in spec["roots"]:
+        for db in glob.glob(os.path.join(home, root, "*", spec["db"])):
+            try:
+                mtime = os.path.getmtime(db)
+            except OSError:
+                continue
+            if best is None or mtime > best[0]:
+                best = (mtime, os.path.dirname(db), db)
+    return best and best[1:]
+
+
+def _firefox(profile, db):
+    rows = _snapshot_rows(db, "select url, title, last_visit_date from moz_places "
+                              "where last_visit_date is not null and hidden = 0 "
+                              "order by last_visit_date desc limit 200")
+    recent = [_entry(u, t, (d or 0) / 1_000_000) for u, t, d in rows if _host(u)]
+    tabs = []
+    for name in ("sessionstore-backups/recovery.jsonlz4", "sessionstore-backups/recovery.baklz4",
+                 "sessionstore-backups/previous.jsonlz4", "sessionstore.jsonlz4"):
+        data = _mozlz4(os.path.join(profile, name))
+        if not isinstance(data, dict):
+            continue
+        for win in data.get("windows", []):
+            for tab in win.get("tabs", []):
+                entries = tab.get("entries", [])
+                idx = tab.get("index", len(entries))
+                if entries and 1 <= idx <= len(entries):
+                    e = entries[idx - 1]
+                    url = e.get("url", "")
+                    if _host(url) and not url.startswith("about:"):
+                        tabs.append(_entry(url, e.get("title", ""), (tab.get("lastAccessed") or 0) / 1000))
+        break
+    return tabs, recent
+
+
+def _chromium(profile, db):
+    rows = _snapshot_rows(db, "select u.url, u.title, u.last_visit_time, k.term "
+                              "from urls u left join keyword_search_terms k on k.url_id = u.id "
+                              "where u.last_visit_time > 0 order by u.last_visit_time desc limit 200")
+    recent = [_entry(u, t, v / 1_000_000 - 11644473600, s or "") for u, t, v, s in rows if _host(u)]
+    now = time.time()
+    tabs = [e for e in recent if now - e["when"] < OPEN_WINDOW]     # no readable tab list; the last few minutes stand in
+    return tabs, recent
+
+
+def _dedupe(entries):
+    """Newest kept, same address not repeated."""
+    seen, out = set(), []
+    for e in entries:
+        if e["url"] in seen:
+            continue
+        seen.add(e["url"])
+        out.append(e)
+    return out
+
+
+def browser_activity(user):
+    """Per browser this account has used: the tabs open now and the recent history."""
+    home = user["home"]
+    out = []
+    for spec in BROWSERS:
+        found = _newest_profile(home, spec)
+        if not found:
+            continue
+        profile, db = found
+        reader = _firefox if spec["kind"] == "firefox" else _chromium
+        try:
+            tabs, recent = reader(profile, db)
+        except Exception as e:
+            log("browser %s read failed: %r" % (spec["id"], e))
+            tabs, recent = [], []
+        if not tabs and not recent:
+            continue
+        out.append({"id": spec["id"], "name": spec["name"],
+                    "open": _dedupe(tabs)[:40], "recent": _dedupe(recent)[:RECENT_LIMIT]})
+    return out
+
+
 # ------------------------------------------------------------------- actions
 
 def power(kind):
@@ -616,7 +825,7 @@ def op_status(req, st):
             u["net_timer"] = {"remaining": max(0, int(e["deadline"] - now)), "warn": bool(e.get("warn"))}
     t = st["timer"]
     timer = {"remaining": max(0, int(t["deadline"] - now)), "warn": bool(t.get("warn"))} if t else None
-    caps = ["seconds"] + (["net"] if net_supported() else []) + (["login"] if login_hook() else [])
+    caps = ["seconds", "browsers"] + (["net"] if net_supported() else []) + (["login"] if login_hook() else [])
     return {"ok": True, "id": st["id"], "name": host_name(), "os": os_name(),
             "users": users, "timer": timer, "caps": caps, "dry": DRY}
 
@@ -632,6 +841,21 @@ def op_apps(req, st):
         return {"ok": True, "apps": d.get("apps", {}).get(req.get("user"), [])} if ok else {"ok": False, "error": "bad_user"}
     u = find_user(req)
     return {"ok": True, "apps": open_apps(u)} if u else {"ok": False, "error": "bad_user"}
+
+
+def op_browsers(req, st):
+    d = demo()
+    if d:
+        ok = any(u["name"] == req.get("user") for u in d["users"])
+        return {"ok": True, "browsers": d.get("browsers", {}).get(req.get("user"), [])} if ok else {"ok": False, "error": "bad_user"}
+    u = find_user(req)
+    if not u:
+        return {"ok": False, "error": "bad_user"}
+    try:
+        return {"ok": True, "browsers": browser_activity(u)}
+    except Exception as e:
+        log("browser activity failed: %r" % e)
+        return {"ok": True, "browsers": []}
 
 
 def countdown(req, low=10):
@@ -903,7 +1127,7 @@ def op_forget(req, st):
     return {"ok": True}
 
 
-OPS = {"status": op_status, "apps": op_apps, "poweroff": op_power, "reboot": op_power,
+OPS = {"status": op_status, "apps": op_apps, "browsers": op_browsers, "poweroff": op_power, "reboot": op_power,
        "timer_set": op_timer_set, "timer_cancel": op_timer_cancel, "lock": op_lock,
        "logout": op_logout, "login": op_login, "net_set": op_net_set, "net_clear": op_net_clear,
        "forget": op_forget}
@@ -1336,6 +1560,10 @@ def main(argv):
     if cmd == "apps" and len(args) == 2:       # debugging aid: what the phone would see
         u = find_user({"user": args[1]})
         print(json.dumps(open_apps(u), indent=1) if u else "no such user")
+        return 0
+    if cmd == "browsers" and len(args) == 2:   # debugging aid: the browser activity the phone would see
+        u = find_user({"user": args[1]})
+        print(json.dumps(browser_activity(u), indent=1) if u else "no such user")
         return 0
     print(USAGE)
     return 1

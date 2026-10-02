@@ -26,11 +26,14 @@ import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LockOpen
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.PowerSettingsNew
+import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.QrCodeScanner
 import androidx.compose.material.icons.rounded.RestartAlt
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.WifiOff
@@ -441,7 +444,7 @@ private fun UserRow(u: UserInfo, title: String, onClick: () -> Unit) {
 // ------------------------------------------------------------------ user
 
 @Composable
-fun UserScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: String, onBack: () -> Unit, onGone: () -> Unit) {
+fun UserScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: String, onBack: () -> Unit, onGone: () -> Unit, onBrowser: (String) -> Unit) {
     val store by repo.store.collectAsStateWithLifecycle()
     val liveMap by repo.live.collectAsStateWithLifecycle()
     val c = store.computers.find { it.id == id }
@@ -455,12 +458,15 @@ fun UserScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: Strin
     var busy by remember { mutableStateOf<String?>(null) }
     var ask by remember { mutableStateOf<Ask?>(null) }
     var apps by remember { mutableStateOf<List<AppInfo>?>(null) }
+    var browsers by remember { mutableStateOf<List<BrowserInfo>?>(null) }
     var failed by remember { mutableStateOf(false) }
+    val canBrowsers = live.status?.caps?.contains("browsers") == true
     Every(5000, id + userName) {
         repo.refresh(id)
         val got = repo.apps(id, userName)
         if (got != null) apps = got
         failed = got == null
+        repo.browsers(id, userName)?.let { browsers = it }   // null on an older agent; the section stays hidden by caps
     }
     val on = live.link == Link.ON
     val loggedIn = on && user != null && user.state != UserState.NONE
@@ -600,6 +606,25 @@ fun UserScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: Strin
                 }
             }
         }
+        if (on && canBrowsers) {
+            item { SectionLabel("Websites") }
+            val bs = browsers
+            when {
+                bs == null -> item { LookingCard() }
+                bs.isEmpty() -> item { Note("No browser history yet. Private windows are never shown here.") }
+                else -> {
+                    item {
+                        Card(padding = 8.dp) {
+                            bs.forEachIndexed { i, b ->
+                                if (i > 0) HorizontalDivider(Modifier.padding(start = 68.dp, end = 12.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                                BrowserRow(b) { onBrowser(b.id) }
+                            }
+                        }
+                    }
+                    item { Text("Private or incognito windows are not shown.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 4.dp)) }
+                }
+            }
+        }
         item { SectionLabel("Open right now") }
         val list = apps
         when {
@@ -671,6 +696,129 @@ private fun AppRow(a: AppInfo) {
             Text(
                 formatAge(a.ageSeconds) + if (a.terminal) " · from a terminal" else "",
                 style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun LookingCard() {
+    Card {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.5.dp)
+            Spacer(Modifier.width(14.dp))
+            Text("Looking…", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun BrowserRow(b: BrowserInfo, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val sites = (b.open.map { it.host } + b.recent.map { it.host }).filter { it.isNotBlank() }.distinct()
+    Row(
+        Modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium).clickable(onClick = onClick).padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(44.dp).clip(CircleShape).background(scheme.secondaryContainer), contentAlignment = Alignment.Center) {
+            Icon(Icons.Rounded.Language, null, Modifier.size(24.dp), tint = scheme.onSecondaryContainer)
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(b.name, style = MaterialTheme.typography.titleMedium)
+            Text(
+                if (b.open.isEmpty()) "${b.recent.size} recent" else "${b.open.size} open now · ${b.recent.size} recent",
+                style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant,
+            )
+            if (sites.isNotEmpty())
+                Text(sites.take(3).joinToString(", "), style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Icon(Icons.Rounded.ChevronRight, null, tint = scheme.onSurfaceVariant)
+    }
+}
+
+// ------------------------------------------------------------- browser sites
+
+@Composable
+fun BrowserScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: String, browserId: String, onBack: () -> Unit, onGone: () -> Unit) {
+    val store by repo.store.collectAsStateWithLifecycle()
+    val liveMap by repo.live.collectAsStateWithLifecycle()
+    val c = store.computers.find { it.id == id }
+    if (c == null) {
+        LaunchedEffect(Unit) { onGone() }
+        return
+    }
+    val live = liveMap[id] ?: Live()
+    var browsers by remember { mutableStateOf<List<BrowserInfo>?>(null) }
+    var query by rememberSaveable { mutableStateOf("") }
+    Every(5000, id + userName + browserId) {
+        repo.refresh(id)
+        repo.browsers(id, userName)?.let { browsers = it }
+    }
+    val b = browsers?.find { it.id == browserId }
+    val open = b?.open?.filter { it.matches(query) }.orEmpty()
+    val recent = b?.recent?.filter { it.matches(query) }.orEmpty()
+    val now = System.currentTimeMillis() / 1000
+
+    Page(b?.name ?: "Websites", snack, onBack) {
+        item {
+            OutlinedTextField(
+                value = query, onValueChange = { query = it }, singleLine = true,
+                shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("Search sites, titles or words") },
+                leadingIcon = { Icon(Icons.Rounded.Search, null) },
+                keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
+            )
+        }
+        when {
+            live.link != Link.ON -> item { Note("The computer cannot be reached, so there is nothing to show.") }
+            b == null && browsers == null -> item { LookingCard() }
+            b == null -> item { Note("Nothing from this browser.") }
+            else -> {
+                item { SectionLabel("Open now") }
+                if (open.isEmpty()) item { Note(if (query.isBlank()) "No tabs open right now." else "No open tabs match “${query.trim()}”.") }
+                else item { Card(padding = 8.dp) { WebList(open, now) } }
+
+                item { SectionLabel("Recently visited") }
+                if (recent.isEmpty()) item { Note(if (query.isBlank()) "No history yet." else "No pages match “${query.trim()}”.") }
+                else item { Card(padding = 8.dp) { WebList(recent, now) } }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WebList(entries: List<WebEntry>, nowSeconds: Long) {
+    entries.forEachIndexed { i, e ->
+        if (i > 0) HorizontalDivider(Modifier.padding(start = 68.dp, end = 12.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+        WebRow(e, nowSeconds)
+    }
+}
+
+@Composable
+private fun WebRow(e: WebEntry, nowSeconds: Long) {
+    val scheme = MaterialTheme.colorScheme
+    val search = e.search.isNotBlank()
+    Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier.size(44.dp).clip(CircleShape).background(if (search) scheme.tertiaryContainer else scheme.secondaryContainer),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                if (search) Icons.Rounded.Search else Icons.Rounded.Public, null, Modifier.size(22.dp),
+                tint = if (search) scheme.onTertiaryContainer else scheme.onSecondaryContainer,
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                if (search) "Searched “${e.search}”" else e.label,
+                style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
+            )
+            val when0 = formatWhen(e.whenSeconds, nowSeconds)
+            Text(
+                listOf(e.host, when0).filter { it.isNotBlank() }.joinToString(" · "),
+                style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
         }
     }
