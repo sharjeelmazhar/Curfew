@@ -265,13 +265,63 @@ class CurfewTest {
 
     @Test fun headlineSaysWhoIsUsingIt() {
         val s = parseStatus(JSONObject(statusJson))
-        assertEquals("Gaming is using it", s.headline())
+        assertEquals("Gaming is using it · classes also logged in", s.headline())
         val locked = s.copy(users = s.users.filter { it.state != UserState.ACTIVE })
         assertEquals("On, classes logged in, screen locked", locked.headline())
+        // switched user: one in front, the others still logged in behind
+        fun u(name: String, state: UserState) = UserInfo(name, "", false, state)
+        val three = s.copy(users = listOf(u("dad", UserState.LOGGED_IN), u("quran", UserState.ACTIVE), u("gaming", UserState.LOGGED_IN)))
+        assertEquals("quran is using it · dad and gaming also logged in", three.headline())
+        assertEquals("On, dad logged in", three.copy(users = three.users.take(1)).headline())
+        assertEquals("Quran is using it · Baba and gaming also logged in", three.headline { mapOf("quran" to "Quran", "dad" to "Baba")[it.name] ?: it.display })
         assertEquals("On, nobody logged in", s.copy(users = s.users.take(1)).headline())
         assertEquals("On, nobody logged in", cardLine(Link.ON, s.copy(users = emptyList())))
         assertEquals("Off", cardLine(Link.OFF, null))
         assertEquals("Needs pairing again", cardLine(Link.NOT_RECOGNISED, s))
+    }
+
+    @Test fun statusCarriesInternetAndAbilities() {
+        val s = parseStatus(JSONObject("""{"ok":true,"name":"pc","caps":["seconds","net","login"],"timer":null,"users":[
+            {"name":"dad","admin":true,"state":"active","net":"on"},
+            {"name":"gaming","admin":false,"state":"none","net":"off"},
+            {"name":"quran","admin":false,"state":"none","net":"on","net_timer":{"remaining":90,"warn":false}}]}"""))
+        assertEquals(setOf("seconds", "net", "login"), s.caps)
+        assertEquals(listOf(false, true, false), s.users.map { it.netOff })
+        assertEquals(listOf(null, null, 90), s.users.map { it.netSeconds })
+        // an older Curfew on the computer says nothing about either
+        val old = parseStatus(JSONObject(statusJson))
+        assertTrue(old.caps.isEmpty() && old.users.none { it.netOff || it.netSeconds != null })
+    }
+
+    @Test fun namesGivenInTheAppStayOnThePhone() {
+        val s = StoreData(listOf(pc)).withAlias("id1", "  Fatima's   computer ").withUserAlias("id1", "gaming-user", "Gaming")
+        val c = s.computers.single()
+        assertEquals("Fatima's computer", c.title)
+        assertEquals("laptop", c.name)                                   // what the computer calls itself is kept
+        assertEquals("Gaming", c.userTitle(UserInfo("gaming-user", "Gaming User", false, UserState.NONE)))
+        assertEquals("Quran", c.userTitle(UserInfo("quran", "Quran", false, UserState.NONE)))
+        assertEquals(s, StoreData.fromJson(s.toJson()))
+        // an empty name goes back to the computer's own
+        val back = s.withAlias("id1", " ").withUserAlias("id1", "gaming-user", "")
+        assertEquals("laptop", back.computers.single().title)
+        assertTrue(back.computers.single().userAliases.isEmpty())
+        // pairing again keeps the names; a store saved by the first version of the app still loads
+        assertEquals("Fatima's computer", s.withPaired(pc.copy(phoneId = "p9", key = "cc"), 9L).computers.single().title)
+        val v1 = """{"computers":[{"id":"id1","name":"laptop","phone":"p1","key":"aa","host":"192.168.1.20","port":787,"added":5}],"goodbyes":[]}"""
+        assertEquals(StoreData(listOf(pc)), StoreData.fromJson(v1))
+    }
+
+    @Test fun timerChoices() {
+        assertEquals(listOf(15, 30, 60, 120, 180, 240, 300, 600), timerSteps(15, 6 * 3600).take(8))
+        assertEquals(6 * 3600, timerSteps(15, 6 * 3600).last())
+        assertEquals(300, timerSteps(300, 6 * 3600).first())               // the final app starts at 5 minutes
+        assertEquals(listOf(15, 900, 1800, 2700, 3600), timerPresets(15))
+        assertEquals(listOf(900, 1800, 2700, 3600), timerPresets(300))
+        assertEquals(timerSteps(), timerSteps().distinct().sorted())
+        assertEquals("15 s", formatLength(15))
+        assertEquals("1 min", formatLength(60))
+        assertEquals("1 h 30 min", formatLength(5400))
+        assertEquals("6 h", formatLength(21600))
     }
 
     @Test fun appsParse() {

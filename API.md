@@ -66,19 +66,33 @@ Unauthenticated refusals (HTTP 4xx, treat as hints only): `unknown_phone`, `bad_
 
 | op | extra fields | answer |
 |---|---|---|
-| `status` | | `id`, `name`, `os`, `users: [{name, full, admin, state}]`, `timer: null \| {remaining, warn}` |
+| `status` | | `id`, `name`, `os`, `caps`, `users: [{name, full, admin, state, net, net_timer?}]`, `timer: null \| {remaining, warn}` |
 | `apps` | `user` | `apps: [{name, detail, age, terminal}]`, newest first, at most 15 |
 | `poweroff`, `reboot` | | |
-| `timer_set` | `minutes` (1-1440), `warn` (bool) | `timer` |
+| `timer_set` | `seconds` (10-86400) or `minutes` (1-1440), `warn` (bool) | `timer` |
 | `timer_cancel` | | `timer: null` |
 | `lock`, `logout` | `user` | |
+| `login` | `user` | `how`: `unlocked` (an open session was brought to the screen and unlocked) or `approved` (the login screen lets this account in once, within `seconds`) |
+| `net_set` | `user`, `seconds` (0 = now, or 10-86400), `warn` | internet off for that account, now or after the countdown |
+| `net_clear` | `user` | internet back on, countdown cancelled |
 | `forget` | | removes the calling phone |
+
+`caps` lists what this agent can do: `seconds` (timers in seconds), `net` (iptables is present),
+`login` (the login screen is set up to ask the agent). An agent without `caps` is the first version.
+`net` is `on` or `off`; `net_timer` is `{remaining, warn}` while a countdown runs. Admin accounts are
+always `on`.
 
 `state` is `none`, `logged_in`, `locked` or `active`. `remaining` and `age` are seconds, so
 clients never compare clocks. Failures are authenticated too: `{"ok": false, "error": ...}` with
-`bad_op`, `bad_user`, `bad_args`, `not_logged_in`, `failed`, or **`unpaired`**: the phone was
+`bad_op`, `bad_user`, `bad_args`, `not_logged_in`, `is_admin`, `unsupported`, `failed`, or **`unpaired`**: the phone was
 removed with `sudo curfew unpair`; it is signed with the old key so the client can trust it and
 drop the computer.
+
+## Flood limits
+
+The agent serves at most 8 connections per source address at a time and keeps at most 32 unused
+nonces per source address, so a flood from one place (an account on the same computer, say) cannot
+lock a phone out.
 
 ## Notes for a second client (web page for an iPhone)
 

@@ -24,16 +24,20 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.LockOpen
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.QrCodeScanner
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.Timer
+import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -109,14 +113,17 @@ fun secondsLeft(endsAt: Long?): Int? {
 fun HomeScreen(repo: Repo, snack: SnackbarHostState, onOpen: (String) -> Unit, onAdd: () -> Unit) {
     val store by repo.store.collectAsStateWithLifecycle()
     val live by repo.live.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val unguarded = remember { guardOf(context) == Guard.NONE }
     Every(4000) { repo.refreshAll() }
     Page(
         "Curfew", snack,
         bottomBar = { BottomAction { BigButton("Add computer", Icons.Rounded.Add, onAdd, Modifier.fillMaxWidth(), primary = true) } },
     ) {
         if (store.computers.isEmpty()) item { EmptyHome() }
+        if (unguarded) item { Note("This phone has no fingerprint or screen lock set up, so anyone holding it can open Curfew. Add a fingerprint in the phone’s settings.") }
         items(store.computers, key = { it.id }) { c ->
-            val twin = store.computers.count { it.name == c.name } > 1
+            val twin = store.computers.count { it.title == c.title } > 1
             ComputerCard(c, live[c.id] ?: Live(), if (twin) c.id.takeLast(4) else null) { onOpen(c.id) }
         }
     }
@@ -150,12 +157,12 @@ private fun ComputerCard(c: Computer, live: Live, tag: String?, onClick: () -> U
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(c.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                    Text(c.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                     if (tag != null) Text("  #$tag", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                 }
                 Text(
-                    cardLine(live.link, live.status), style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    cardLine(live.link, live.status, c::userTitle), style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3, overflow = TextOverflow.Ellipsis,
                 )
                 if (remaining != null) {
                     Spacer(Modifier.size(6.dp))
@@ -163,7 +170,7 @@ private fun ComputerCard(c: Computer, live: Live, tag: String?, onClick: () -> U
                         Icon(Icons.Rounded.Timer, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(6.dp))
                         Text(
-                            if (remaining > 0) "Switches off in ${formatCountdown(remaining)}" else "Switching off…",
+                            if (remaining > 0) "Shuts down in ${formatCountdown(remaining)}" else "Shutting down…",
                             style = MaterialTheme.typography.labelLarge.merge(Tabular), color = MaterialTheme.colorScheme.primary, maxLines = 2,
                         )
                     }
@@ -176,9 +183,8 @@ private fun ComputerCard(c: Computer, live: Live, tag: String?, onClick: () -> U
 
 // -------------------------------------------------------------- computer
 
-private enum class Ask { POWEROFF, REBOOT, REMOVE, CUSTOM, LOGOUT }
+private enum class Ask { POWEROFF, REBOOT, REMOVE, RENAME, LOGOUT, NET_OFF }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ComputerScreen(repo: Repo, snack: SnackbarHostState, id: String, onBack: () -> Unit, onGone: () -> Unit, onUser: (String) -> Unit) {
     val store by repo.store.collectAsStateWithLifecycle()
@@ -206,16 +212,16 @@ fun ComputerScreen(repo: Repo, snack: SnackbarHostState, id: String, onBack: () 
         }
     }
 
-    fun setTimer(minutes: Int) = run("timer_set", "Switches off in ${formatMinutes(minutes)}", mapOf("minutes" to minutes, "warn" to warn))
+    fun setTimer(seconds: Int) = run("timer_set", "Shuts down in ${formatLength(seconds)}", lengthArgs(seconds, warn))
 
-    Page(c.name, snack, onBack) {
+    Page(c.title, snack, onBack, actions = { RenameButton { ask = Ask.RENAME } }) {
         item {
             Card {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     PowerLamp(lampFor(live.link), 72.dp)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(cardLine(live.link, live.status), style = MaterialTheme.typography.titleMedium)
+                        Text(cardLine(live.link, live.status, c::userTitle), style = MaterialTheme.typography.titleMedium)
                         val os = live.status?.os.orEmpty()
                         if (live.link == Link.ON && os.isNotEmpty())
                             Text(os, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -232,48 +238,19 @@ fun ComputerScreen(repo: Repo, snack: SnackbarHostState, id: String, onBack: () 
         if (live.link == Link.ON) {
             item {
                 Card {
-                    if (remaining != null) {
-                        Text("Switches off in", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(
-                            if (remaining > 0) formatCountdown(remaining) else "now…",
-                            style = MaterialTheme.typography.displayMedium.merge(Tabular), color = MaterialTheme.colorScheme.primary, maxLines = 1,
-                        )
-                        Spacer(Modifier.size(12.dp))
-                        OutlinedButton(
-                            onClick = { run("timer_cancel", "Timer cancelled") }, enabled = busy == null,
-                            shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
-                        ) { Text("Cancel timer", style = MaterialTheme.typography.titleSmall) }
-                        Spacer(Modifier.size(16.dp))
-                        Text("Change to", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    } else {
-                        Text("Switch off after", style = MaterialTheme.typography.titleMedium)
-                    }
+                    if (remaining != null) CountdownHead("Shuts down in", remaining, busy == null) { run("timer_cancel", "Timer cancelled") }
+                    else Text("Shut down after", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.size(12.dp))
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(15, 30, 45, 60).forEach { m -> Pill("$m min", busy == null) { setTimer(m) } }
-                        Pill("Custom", busy == null) { ask = Ask.CUSTOM }
-                    }
-                    Spacer(Modifier.size(8.dp))
-                    Row(
-                        Modifier.fillMaxWidth().clip(MaterialTheme.shapes.small)
-                            .toggleable(warn, role = Role.Switch, onValueChange = { warn = it }).padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f).padding(end = 12.dp)) {
-                            Text("Warn them first", style = MaterialTheme.typography.bodyLarge)
-                            Text(
-                                "Shows a notice on the computer when the timer starts and one minute before it ends",
-                                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Switch(checked = warn, onCheckedChange = null)
-                    }
+                    TimerChoices(
+                        "Shut down after", busy == null, warn, { warn = it },
+                        "Shows a notice on the computer when the timer starts and one minute before it ends", ::setTimer,
+                    )
                 }
             }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     BigButton("Restart", Icons.Rounded.RestartAlt, { ask = Ask.REBOOT }, Modifier.weight(1f), busy = busy == "reboot", enabled = busy == null)
-                    BigButton("Power off", Icons.Rounded.PowerSettingsNew, { ask = Ask.POWEROFF }, Modifier.weight(1f), busy = busy == "poweroff", enabled = busy == null, danger = true)
+                    BigButton("Shut down", Icons.Rounded.PowerSettingsNew, { ask = Ask.POWEROFF }, Modifier.weight(1f), busy = busy == "poweroff", enabled = busy == null, danger = true)
                 }
             }
             val users = live.status?.users.orEmpty()
@@ -283,7 +260,7 @@ fun ComputerScreen(repo: Repo, snack: SnackbarHostState, id: String, onBack: () 
                     if (users.isEmpty()) Text("No user accounts found.", Modifier.padding(12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     users.forEachIndexed { i, u ->
                         if (i > 0) HorizontalDivider(Modifier.padding(start = 68.dp, end = 12.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-                        UserRow(u) { onUser(u.name) }
+                        UserRow(u, c.userTitle(u)) { onUser(u.name) }
                     }
                 }
             }
@@ -299,29 +276,102 @@ fun ComputerScreen(repo: Repo, snack: SnackbarHostState, id: String, onBack: () 
 
     when (ask) {
         Ask.POWEROFF -> ConfirmSheet(
-            "Power off ${c.name}?", "It switches off straight away. Anything not saved is lost.", "Power off",
-            onConfirm = { ask = null; run("poweroff", "Powering off ${c.name}") }, onDismiss = { ask = null },
+            "Shut down ${c.title}?", "It shuts down straight away. Anything not saved is lost.", "Shut down",
+            onConfirm = { ask = null; run("poweroff", "Shutting down ${c.title}") }, onDismiss = { ask = null },
         )
         Ask.REBOOT -> ConfirmSheet(
-            "Restart ${c.name}?", "It restarts straight away. Anything not saved is lost.", "Restart",
-            onConfirm = { ask = null; run("reboot", "Restarting ${c.name}") }, onDismiss = { ask = null },
+            "Restart ${c.title}?", "It restarts straight away. Anything not saved is lost.", "Restart",
+            onConfirm = { ask = null; run("reboot", "Restarting ${c.title}") }, onDismiss = { ask = null },
         )
         Ask.REMOVE -> ConfirmSheet(
-            "Remove ${c.name}?", "This phone will no longer see or control it. To add it back, pair it again from the computer.", "Remove",
-            onConfirm = { ask = null; repo.remove(id); repo.notices.tryEmit("“${c.name}” was removed") }, onDismiss = { ask = null },
+            "Remove ${c.title}?", "This phone will no longer see or control it. To add it back, pair it again from the computer.", "Remove",
+            onConfirm = { ask = null; repo.remove(id); repo.notices.tryEmit("“${c.title}” was removed") }, onDismiss = { ask = null },
         )
-        Ask.CUSTOM -> {
-            var minutes by remember { mutableFloatStateOf(90f) }
-            ConfirmSheet(
-                "Switch off after", "", "Start", danger = false,
-                onConfirm = { ask = null; setTimer(minutes.roundToInt()) }, onDismiss = { ask = null },
-            ) {
-                Text(formatMinutes(minutes.roundToInt()), style = MaterialTheme.typography.displaySmall.merge(Tabular), color = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.size(8.dp))
-                Slider(value = minutes, onValueChange = { minutes = (it / 5).roundToInt() * 5f }, valueRange = 5f..240f)
-            }
-        }
+        Ask.RENAME -> RenameSheet(
+            "Name this computer", c.alias,
+            "Only the name in this app changes. The computer calls itself “${c.name}”; leave the box empty to show that name.",
+            onSave = { ask = null; repo.rename(id, it) }, onDismiss = { ask = null },
+        )
         else -> {}
+    }
+}
+
+/** What a countdown request carries. Whole minutes are also sent the old way, for a computer whose Curfew is older. */
+private fun lengthArgs(seconds: Int, warn: Boolean): Map<String, Any> =
+    mapOf("seconds" to seconds, "warn" to warn) + if (seconds > 0 && seconds % 60 == 0) mapOf("minutes" to seconds / 60) else emptyMap()
+
+@Composable
+private fun RenameButton(onClick: () -> Unit) {
+    IconButton(onClick = onClick) { Icon(Icons.Rounded.Edit, contentDescription = "Rename") }
+}
+
+@Composable
+private fun RenameSheet(title: String, current: String, hint: String, onSave: (String) -> Unit, onDismiss: () -> Unit) {
+    var text by remember { mutableStateOf(current) }
+    ConfirmSheet(title, hint, "Save", danger = false, onConfirm = { onSave(text) }, onDismiss = onDismiss) {
+        Spacer(Modifier.size(16.dp))
+        OutlinedTextField(
+            value = text, onValueChange = { text = it.take(40) }, label = { Text("Name") }, singleLine = true,
+            shape = MaterialTheme.shapes.small, keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+/** A running countdown with its Cancel button, above the choices for changing it. */
+@Composable
+private fun CountdownHead(label: String, remaining: Int, enabled: Boolean, onCancel: () -> Unit) {
+    Text(label, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text(
+        if (remaining > 0) formatCountdown(remaining) else "now…",
+        style = MaterialTheme.typography.displayMedium.merge(Tabular), color = MaterialTheme.colorScheme.primary, maxLines = 1,
+    )
+    Spacer(Modifier.size(12.dp))
+    OutlinedButton(
+        onClick = onCancel, enabled = enabled,
+        shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+    ) { Text("Cancel timer", style = MaterialTheme.typography.titleSmall) }
+    Spacer(Modifier.size(16.dp))
+    Text("Change to", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+/** The one-tap lengths, a custom length, and the switch for telling them first. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TimerChoices(title: String, enabled: Boolean, warn: Boolean, onWarn: (Boolean) -> Unit, warnText: String, onPick: (Int) -> Unit) {
+    var custom by remember { mutableStateOf(false) }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        timerPresets().forEach { s -> Pill(formatLength(s), enabled) { onPick(s) } }
+        Pill("Custom", enabled) { custom = true }
+    }
+    Spacer(Modifier.size(8.dp))
+    Row(
+        Modifier.fillMaxWidth().clip(MaterialTheme.shapes.small)
+            .toggleable(warn, role = Role.Switch, onValueChange = onWarn).padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f).padding(end = 12.dp)) {
+            Text("Warn them first", style = MaterialTheme.typography.bodyLarge)
+            Text(warnText, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = warn, onCheckedChange = null)
+    }
+    if (custom) {
+        val steps = remember { timerSteps() }
+        var at by remember { mutableFloatStateOf(steps.indexOf(90 * 60).coerceAtLeast(0).toFloat()) }
+        val seconds = steps[at.roundToInt().coerceIn(steps.indices)]
+        ConfirmSheet(
+            title, "", "Start", danger = false,
+            onConfirm = { custom = false; onPick(seconds) }, onDismiss = { custom = false },
+        ) {
+            Text(formatLength(seconds), style = MaterialTheme.typography.displaySmall.merge(Tabular), color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.size(8.dp))
+            Slider(value = at, onValueChange = { at = it.roundToInt().toFloat() }, valueRange = 0f..(steps.size - 1).toFloat())
+            Text(
+                "From ${formatLength(steps.first())} to ${formatLength(steps.last())}",
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
@@ -356,23 +406,24 @@ private fun StateLine(u: UserInfo) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(9.dp).clip(CircleShape).background(stateColor(u.state)))
         Spacer(Modifier.width(8.dp))
+        val net = if (u.netOff) " · Internet off" else if (u.netSeconds != null) " · Internet timer" else ""
         Text(
-            (if (u.admin) "Admin" else "Standard") + " · " + u.state.label, style = MaterialTheme.typography.bodyMedium,
+            (if (u.admin) "Admin" else "Standard") + " · " + u.state.label + net, style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis,
         )
     }
 }
 
 @Composable
-private fun UserRow(u: UserInfo, onClick: () -> Unit) {
+private fun UserRow(u: UserInfo, title: String, onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium).clickable(onClick = onClick).padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Avatar(u.display, 44.dp)
+        Avatar(title, 44.dp)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(u.display, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             StateLine(u)
         }
         Icon(Icons.Rounded.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
@@ -405,26 +456,63 @@ fun UserScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: Strin
     }
     val on = live.link == Link.ON
     val loggedIn = on && user != null && user.state != UserState.NONE
-    val name = user?.display ?: userName
+    val name = user?.let(c::userTitle) ?: c.userAliases[userName] ?: userName
+    val caps = live.status?.caps.orEmpty()
+    val confirmOwner = LocalConfirmOwner.current
+    var netWarn by rememberSaveable { mutableStateOf(false) }
+    var approvedUntil by remember { mutableStateOf<Long?>(null) }
+    val approvedLeft = secondsLeft(approvedUntil.takeIf { on && user?.state == UserState.NONE })
+    val netLeft = secondsLeft(live.netEndsAt[userName].takeIf { on })
+    LaunchedEffect(netLeft == 0) {        // the countdown just ended: show the new state without waiting for the next look
+        if (netLeft == 0) {
+            delay(1500)
+            repo.refresh(id)
+        }
+    }
 
-    fun run(op: String, done: String) {
+    fun run(op: String, done: String, args: Map<String, Any> = emptyMap()) {
         if (busy != null) return
         busy = op
         scope.launch {
-            val error = repo.command(id, op, mapOf("user" to userName))
+            val error = repo.command(id, op, args + ("user" to userName))
             busy = null
             say(snack, error ?: done)
         }
     }
 
-    Page(name, snack, onBack) {
+    fun netOffAfter(seconds: Int) = run(
+        "net_set", if (seconds == 0) "Internet is off for $name" else "Internet turns off for $name in ${formatLength(seconds)}",
+        lengthArgs(seconds, netWarn),
+    )
+
+    /** Lets this account in without its password, after the owner of the phone confirms it is them. */
+    fun login() {
+        if (busy != null) return
+        confirmOwner("Log in $name", "On ${c.title}, without typing the password") { yes ->
+            if (!yes || busy != null) return@confirmOwner
+            busy = "login"
+            scope.launch {
+                var unlocked = false
+                var seconds = 0
+                val error = repo.command(id, "login", mapOf("user" to userName)) {
+                    unlocked = it.optString("how") == "unlocked"
+                    seconds = it.optInt("seconds")
+                }
+                busy = null
+                if (error == null && !unlocked) approvedUntil = SystemClock.elapsedRealtime() + seconds * 1000L
+                else say(snack, error ?: "Unlocked $name’s screen")
+            }
+        }
+    }
+
+    Page(name, snack, onBack, actions = { RenameButton { ask = Ask.RENAME } }) {
         item {
             Card {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Avatar(name, 56.dp)
                     Spacer(Modifier.width(14.dp))
                     Column(Modifier.weight(1f)) {
-                        Text("On ${c.name}", style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("On ${c.title}", style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         when {
                             !on -> Text(cardLine(live.link, live.status), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             user != null -> StateLine(user)
@@ -434,10 +522,74 @@ fun UserScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: Strin
                 }
             }
         }
+        if (approvedLeft != null && approvedLeft > 0) item {
+            Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(20.dp)) {
+                    Text("Now click $name on the computer", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    Spacer(Modifier.size(4.dp))
+                    Text(
+                        "It lets them in without the password. If it is already asking for the password, press Enter there. " +
+                            "This works once, for ${formatCountdown(approvedLeft)} more.",
+                        style = MaterialTheme.typography.bodyLarge.merge(Tabular), color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
+                }
+            }
+        }
+        if (on && user != null && "login" in caps && user.state != UserState.ACTIVE) item {
+            BigButton(
+                if (user.state == UserState.NONE) "Log in without the password" else "Unlock without the password",
+                Icons.Rounded.LockOpen, ::login, Modifier.fillMaxWidth(), busy = busy == "login", enabled = busy == null, primary = true,
+            )
+        }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 BigButton("Lock screen", Icons.Rounded.Lock, { run("lock", "Locked $name’s screen") }, Modifier.weight(1f), busy = busy == "lock", enabled = loggedIn && busy == null)
                 BigButton("Log out", Icons.AutoMirrored.Rounded.Logout, { ask = Ask.LOGOUT }, Modifier.weight(1f), busy = busy == "logout", enabled = loggedIn && busy == null)
+            }
+        }
+        if (on && user != null && "net" in caps) {
+            item { SectionLabel("Internet") }
+            item {
+                Card {
+                    when {
+                        user.admin -> Text(
+                            "Always on. The internet is never turned off for an admin account.",
+                            style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        else -> {
+                            if (user.netOff) {
+                                Text("Off for $name", style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    "The computer itself stays connected, and the other accounts keep their internet.",
+                                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Spacer(Modifier.size(12.dp))
+                                BigButton(
+                                    "Turn back on", null, { run("net_clear", "Internet is back on for $name") }, Modifier.fillMaxWidth(),
+                                    busy = busy == "net_clear", enabled = busy == null,
+                                )
+                                Spacer(Modifier.size(16.dp))
+                                Text("Or back on for", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            } else if (netLeft != null) {
+                                CountdownHead("Internet turns off in", netLeft, busy == null) { run("net_clear", "Timer cancelled") }
+                            } else {
+                                Text("Turn off after", style = MaterialTheme.typography.titleMedium)
+                            }
+                            Spacer(Modifier.size(12.dp))
+                            TimerChoices(
+                                "Turn the internet off after", busy == null, netWarn, { netWarn = it },
+                                "Shows $name a notice when the timer starts and one minute before the internet goes off", ::netOffAfter,
+                            )
+                            if (!user.netOff) {
+                                Spacer(Modifier.size(8.dp))
+                                BigButton(
+                                    "Turn off now", Icons.Rounded.WifiOff, { ask = Ask.NET_OFF }, Modifier.fillMaxWidth(),
+                                    busy = busy == "net_set", enabled = busy == null, danger = true,
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
         item { SectionLabel("Open right now") }
@@ -467,10 +619,22 @@ fun UserScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: Strin
         }
     }
 
-    if (ask == Ask.LOGOUT) ConfirmSheet(
-        "Log out $name?", "Everything $name has open is closed. Anything not saved is lost.", "Log out",
-        onConfirm = { ask = null; run("logout", "Logged out $name") }, onDismiss = { ask = null },
-    )
+    when (ask) {
+        Ask.LOGOUT -> ConfirmSheet(
+            "Log out $name?", "Everything $name has open is closed. Anything not saved is lost.", "Log out",
+            onConfirm = { ask = null; run("logout", "Logged out $name") }, onDismiss = { ask = null },
+        )
+        Ask.NET_OFF -> ConfirmSheet(
+            "Turn off the internet for $name?", "It goes off straight away, in this account only. The computer stays on and nothing is closed.", "Turn off",
+            onConfirm = { ask = null; netOffAfter(0) }, onDismiss = { ask = null },
+        )
+        Ask.RENAME -> RenameSheet(
+            "Name this account", c.userAliases[userName].orEmpty(),
+            "Only the name in this app changes. The account is called “${user?.display ?: userName}” on the computer; leave the box empty to show that name.",
+            onSave = { ask = null; repo.renameUser(id, userName, it) }, onDismiss = { ask = null },
+        )
+        else -> {}
+    }
 }
 
 @Composable
@@ -523,7 +687,7 @@ fun AddScreen(repo: Repo, snack: SnackbarHostState, onBack: () -> Unit, onDone: 
         scope.launch {
             when (val r = repo.pair(link)) {
                 is PairResult.Paired -> {
-                    repo.notices.tryEmit("“${r.computer.name}” was added")
+                    repo.notices.tryEmit("“${r.computer.title}” was added")
                     onDone()
                 }
                 PairResult.BadCode -> error = "That code is wrong, already used or expired. Run “sudo curfew pair” on the computer again to get a new one."
@@ -539,12 +703,15 @@ fun AddScreen(repo: Repo, snack: SnackbarHostState, onBack: () -> Unit, onDone: 
         error = null
         val options = GmsBarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).enableAutoZoom().build()
         val scanner = GmsBarcodeScanning.getClient(context, options)
+        AppLock.away = true         // the scanner is another screen; coming back from it is not a new visit
         scanner.startScan()
+            .addOnCanceledListener { AppLock.away = false }
             .addOnSuccessListener { found ->
                 val link = found.rawValue?.let(Proto::parsePairLink)
                 if (link != null) pair(link) else error = "That is not a Curfew code. Scan the code shown by “sudo curfew pair”."
             }
             .addOnFailureListener {
+                AppLock.away = false
                 // The scanner is a small Google Play download; ask for it so the next try works.
                 runCatching { ModuleInstall.getClient(context).deferredInstall(scanner) }
                 manual = true

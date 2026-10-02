@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -122,6 +123,7 @@ fun Page(
     snack: SnackbarHostState,
     onBack: (() -> Unit)? = null,
     bottomBar: @Composable () -> Unit = {},
+    actions: @Composable RowScope.() -> Unit = {},
     content: LazyListScope.() -> Unit,
 ) {
     // Not saved across restarts on purpose: a saved collapse offset in pixels is wrong after the
@@ -139,6 +141,7 @@ fun Page(
                         Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back")
                     }
                 },
+                actions = actions,
                 expandedHeight = 168.dp,
                 colors = TopAppBarDefaults.largeTopAppBarColors(containerColor = page, scrolledContainerColor = page),
                 scrollBehavior = behavior,

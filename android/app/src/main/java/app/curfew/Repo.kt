@@ -52,7 +52,11 @@ class CurfewApp : Application() {
 
 /** What the phone knows about a computer right now. [timerEndsAt] is on the phone's own
  *  uptime clock, so the two clocks never need to agree. */
-data class Live(val link: Link = Link.CHECKING, val status: Status? = null, val timerEndsAt: Long? = null, val fails: Int = 0)
+data class Live(
+    val link: Link = Link.CHECKING, val status: Status? = null, val timerEndsAt: Long? = null, val fails: Int = 0,
+    /** Account name to the moment its internet turns off. */
+    val netEndsAt: Map<String, Long> = emptyMap(),
+)
 
 /** The paired keys, encrypted with a key that never leaves the phone's secure hardware. */
 class SecureFile(context: Context, name: String) {
@@ -266,7 +270,7 @@ class Repo(private val app: Context) {
             Reply.Unpaired -> {
                 save { s -> s.copy(computers = s.computers.filter { it.id != c.id }) }
                 _live.update { it - c.id }
-                notices.tryEmit("“${c.name}” removed this phone, so it was taken off the list.")
+                notices.tryEmit("“${c.title}” removed this phone, so it was taken off the list.")
             }
             Reply.NotRecognised -> setLive(c.id) { it.copy(link = Link.NOT_RECOGNISED, timerEndsAt = null) }
             is Reply.WrongComputer -> {
@@ -289,10 +293,14 @@ class Repo(private val app: Context) {
         val st = parseStatus(j)
         if (st.name != c.name) save { s -> s.copy(computers = s.computers.map { if (it.id == c.id) it.copy(name = st.name) else it }) }
         setLive(c.id) { old ->
-            val ends = st.timerSeconds?.let { SystemClock.elapsedRealtime() + it * 1000L }
+            val now = SystemClock.elapsedRealtime()
             // keep the old deadline when it agrees within 2 s, so the countdown does not jitter
-            val keep = ends != null && old.timerEndsAt != null && kotlin.math.abs(ends - old.timerEndsAt) < 2000
-            Live(Link.ON, st, if (keep) old.timerEndsAt else ends)
+            fun steady(seconds: Int?, before: Long?): Long? {
+                val ends = seconds?.let { now + it * 1000L } ?: return null
+                return if (before != null && kotlin.math.abs(ends - before) < 2000) before else ends
+            }
+            val net = st.users.mapNotNull { u -> steady(u.netSeconds, old.netEndsAt[u.name])?.let { u.name to it } }.toMap()
+            Live(Link.ON, st, steady(st.timerSeconds, old.timerEndsAt), netEndsAt = net)
         }
     }
 
@@ -308,8 +316,12 @@ class Repo(private val app: Context) {
         _store.value.computers.map { async { refresh(it.id) } }.awaitAll()
     }
 
-    /** Runs one action. Returns null on success or a sentence to show. */
-    suspend fun command(id: String, op: String, args: Map<String, Any> = emptyMap()): String? = withContext(Dispatchers.IO) {
+    fun rename(id: String, alias: String) = save { it.withAlias(id, alias) }
+
+    fun renameUser(id: String, user: String, alias: String) = save { it.withUserAlias(id, user, alias) }
+
+    /** Runs one action. Returns null on success or a sentence to show. [answer] gets the reply of a success. */
+    suspend fun command(id: String, op: String, args: Map<String, Any> = emptyMap(), answer: (JSONObject) -> Unit = {}): String? = withContext(Dispatchers.IO) {
         val c = _store.value.computers.find { it.id == id } ?: return@withContext "That computer was removed"
         val payload = JSONObject().put("op", op)
         args.forEach { (k, v) -> payload.put(k, v) }
@@ -322,11 +334,12 @@ class Repo(private val app: Context) {
             reply to ok
         }
         if (ok != null) scope.launch { delay(if (op == "poweroff" || op == "reboot") 2500 else 300); refresh(id) }
+        if (ok != null) answer(ok)
         when {
             ok != null -> null
             reply is Reply.Denied -> errorText(reply.error)
             reply is Reply.Unpaired -> "This phone was removed from that computer"
-            else -> "Could not reach ${c.name}"
+            else -> "Could not reach ${c.title}"
         }
     }
 
