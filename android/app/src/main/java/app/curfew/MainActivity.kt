@@ -52,7 +52,9 @@ class MainActivity : FragmentActivity() {
 
     override fun onStop() {
         asking = false
-        AppLock.onStop()
+        // Switching dark/light mode (or font size, language) rebuilds the screen without the app
+        // ever leaving it, so that must not lock; really leaving the app still does.
+        if (!isChangingConfigurations) AppLock.onStop()
         repo.onBackground()
         super.onStop()
     }

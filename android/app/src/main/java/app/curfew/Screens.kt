@@ -477,6 +477,8 @@ fun UserScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: Strin
     val caps = live.status?.caps.orEmpty()
     val confirmOwner = LocalConfirmOwner.current
     var netWarn by rememberSaveable { mutableStateOf(false) }
+    var shutWarn by rememberSaveable { mutableStateOf(false) }
+    val shutLeft = secondsLeft(live.timerEndsAt.takeIf { on })
     var approvedUntil by remember { mutableStateOf<Long?>(null) }
     val approvedLeft = secondsLeft(approvedUntil.takeIf { on && user?.state == UserState.NONE })
     val netLeft = secondsLeft(live.netEndsAt[userName].takeIf { on })
@@ -562,6 +564,30 @@ fun UserScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: Strin
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 BigButton("Lock screen", Icons.Rounded.Lock, { run("lock", "Locked $name’s screen") }, Modifier.weight(1f), busy = busy == "lock", enabled = loggedIn && busy == null)
                 BigButton("Log out", Icons.AutoMirrored.Rounded.Logout, { ask = Ask.LOGOUT }, Modifier.weight(1f), busy = busy == "logout", enabled = loggedIn && busy == null)
+            }
+        }
+        if (on) {
+            // The same shut-down timer as on the computer's page, here too so both are in one place.
+            item { SectionLabel("Shut down the computer") }
+            item {
+                Card {
+                    if (shutLeft != null) CountdownHead("Shuts down in", shutLeft, busy == null) { run("timer_cancel", "Timer cancelled") }
+                    else Text("Shut down after", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "The whole computer shuts down, for everyone using it.",
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.size(12.dp))
+                    TimerChoices(
+                        "Shut down after", busy == null, shutWarn, { shutWarn = it },
+                        "Shows a notice on the computer when the timer starts and one minute before it ends",
+                    ) { seconds -> run("timer_set", "Shuts down in ${formatLength(seconds)}", lengthArgs(seconds, shutWarn)) }
+                    Spacer(Modifier.size(8.dp))
+                    BigButton(
+                        "Shut down now", Icons.Rounded.PowerSettingsNew, { ask = Ask.POWEROFF }, Modifier.fillMaxWidth(),
+                        busy = busy == "poweroff", enabled = busy == null, danger = true,
+                    )
+                }
             }
         }
         if (on && user != null && "net" in caps) {
@@ -656,6 +682,10 @@ fun UserScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: Strin
     }
 
     when (ask) {
+        Ask.POWEROFF -> ConfirmSheet(
+            "Shut down ${c.title}?", "It shuts down straight away, for everyone using it. Anything not saved is lost.", "Shut down",
+            onConfirm = { ask = null; run("poweroff", "Shutting down ${c.title}") }, onDismiss = { ask = null },
+        )
         Ask.LOGOUT -> ConfirmSheet(
             "Log out $name?", "Everything $name has open is closed. Anything not saved is lost.", "Log out",
             onConfirm = { ask = null; run("logout", "Logged out $name") }, onDismiss = { ask = null },
