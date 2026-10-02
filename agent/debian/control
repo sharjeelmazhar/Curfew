@@ -1,0 +1,17 @@
+Package: curfew
+Version: @VERSION@
+Section: admin
+Priority: optional
+Architecture: all
+Depends: python3 (>= 3.10), systemd, iptables
+Recommends: avahi-daemon, network-manager
+Maintainer: Sharjeel Mazhar <sharjeelmazhar@users.noreply.github.com>
+Homepage: https://github.com/sharjeelmazhar/Curfew
+Description: See and control this computer from a paired phone at home
+ The laptop side of Curfew. A paired Android phone on the same Wi-Fi can see
+ who is logged in, shut the computer down now or after a countdown, lock or
+ log out an account, let an account in without its password being typed, and
+ turn the internet off for one account.
+ .
+ Installing this package also adds the Curfew package source, so later
+ versions arrive with "sudo apt update && sudo apt upgrade".

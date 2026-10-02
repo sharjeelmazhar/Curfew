@@ -1,0 +1,20 @@
+#!/bin/sh
+# Undoes what postinst set up. "apt remove" keeps the paired phones; "apt purge" forgets them too.
+set -e
+case "$1" in remove|purge) ;; *) exit 0 ;; esac
+[ -f /etc/pam.d/gdm-password ] && sed -i '/curfew\.py pam-login/d' /etc/pam.d/gdm-password
+for t in iptables ip6tables; do              # internet back on for everyone
+  command -v "$t" >/dev/null || continue
+  while "$t" -w 5 -D OUTPUT -j CURFEW 2>/dev/null; do :; done
+  "$t" -w 5 -F CURFEW 2>/dev/null || true
+  "$t" -w 5 -X CURFEW 2>/dev/null || true
+done
+rm -rf /run/curfew
+rm -f /etc/avahi/services/curfew.service
+rm -f /etc/polkit-1/rules.d/10-curfew-network.rules /etc/polkit-1/localauthority/50-local.d/curfew-network.pkla
+if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "787/tcp"; then
+  ufw delete allow 787/tcp >/dev/null 2>&1 || true
+fi
+[ -d /run/systemd/system ] && systemctl daemon-reload || true
+if [ "$1" = purge ]; then rm -rf /var/lib/curfew; fi
+exit 0

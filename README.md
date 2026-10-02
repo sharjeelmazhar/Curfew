@@ -19,21 +19,33 @@ There are two parts: a small service that you install once on each laptop, and a
 
 ## 1. Install the service on a laptop
 
-Do this once per laptop, from **your admin account**.
+Do this once per laptop, from **your admin account**. Open a terminal (Ctrl+Alt+T), paste these two lines one at a time, and type your password when asked:
 
-1. Copy the `agent` folder onto the laptop (a USB stick is fine).
-2. Open the folder in the file manager, right-click an empty area and choose **Open in Terminal**.
-3. Type this and press Enter, then type your password when asked:
+```
+wget https://github.com/sharjeelmazhar/Curfew/releases/latest/download/curfew.deb
+sudo apt install ./curfew.deb
+```
 
-   ```
-   sudo ./install.sh
-   ```
-
-4. It prints `Curfew is running` and then asks **Pair a phone now?** Press Enter to say yes and continue with step 3 below, or type `n` to do it later.
+It prints `Curfew is running`. Continue with step 3 below to pair a phone.
 
 If it prints a **WARNING about the Wi-Fi network**, the Wi-Fi password is saved only for your own account, so the laptop has no network in the kids' accounts or at the login screen, and the phone cannot reach it. The warning shows one command that fixes this; copy it into the terminal and press Enter.
 
-Running `sudo ./install.sh` again later is harmless. It refreshes the files and keeps the phones you already paired.
+### Getting a newer version later
+
+Installing the package also tells the laptop where new versions come from. To update:
+
+```
+sudo apt update
+sudo apt upgrade
+```
+
+The new version is in use as soon as that finishes; there is no need to uninstall anything or restart, and paired phones and running timers are kept.
+
+A laptop where an earlier version was installed from the `agent` folder with `install.sh` does not need uninstalling either: install the package as above and it takes over, keeping the paired phones.
+
+### Without the internet
+
+Copy the `agent` folder onto the laptop (a USB stick is fine), open it in the file manager, right-click an empty area, choose **Open in Terminal** and run `sudo ./install.sh`. It builds and installs the same package.
 
 ## 2. Put the app on your phone
 
@@ -90,7 +102,7 @@ What the status line means:
 | On, nobody logged in | The laptop is at the login screen |
 | Off | Shut down, asleep, or not connected to the Wi-Fi |
 | This phone is not on Wi-Fi / not on the home Wi-Fi | Curfew only works at home, on the same Wi-Fi as the laptops |
-| On, but Curfew is not running on it | Restart the laptop; if it stays, run `sudo ./install.sh` again |
+| On, but Curfew is not running on it | Restart the laptop; if it stays, run `sudo apt install --reinstall curfew` |
 | Needs pairing again | The laptop was reinstalled. Remove it in the app and pair it again |
 
 ## Removing things
@@ -121,13 +133,13 @@ Install the service again (step 1) and pair again (step 3). In the app the old e
 
 ## Uninstalling
 
-On the laptop, open a terminal in the `agent` folder and type:
+On the laptop:
 
 ```
-sudo ./uninstall.sh
+sudo apt purge curfew
 ```
 
-It removes the service and everything it stored. On the phone, remove the laptop in the app, or simply uninstall the app.
+It removes the service and everything it set up or stored. On the phone, remove the laptop in the app, or simply uninstall the app.
 
 ## If something does not work
 
@@ -154,7 +166,9 @@ With only the password of their own standard account they cannot stop, change or
 | Path | What |
 |---|---|
 | `agent/curfew.py` | the whole laptop side: daemon and `curfew` command, Python standard library only |
-| `agent/install.sh`, `agent/uninstall.sh`, `agent/curfew.service` | installer, uninstaller, systemd unit |
+| `agent/debian/`, `agent/build-deb.sh`, `agent/VERSION` | the package: what it sets up after installing (`postinst`) and undoes when removed (`postrm`), and the script that builds it |
+| `agent/install.sh`, `agent/uninstall.sh`, `agent/curfew.service` | build-and-install from the folder, remove, systemd unit |
+| `tools/release.sh` | publishes a new version of the laptop side (see below) |
 | `agent/test_agent.py` | end-to-end tests against a real agent in dry-run mode: `python3 agent/test_agent.py` |
 | `android/` | the app (Kotlin, Jetpack Compose). Build with `android/build.sh` after `tools/setup-toolchain.sh` |
 | `API.md` | the small network protocol, for a second client later |
@@ -167,5 +181,9 @@ With only the password of their own standard account they cannot stop, change or
 python3 agent/curfew.py --dry-run serve      # in one terminal
 python3 agent/curfew.py --dry-run pair       # in another: shows the QR code
 ```
+
+**Releasing a new version of the laptop side:** raise the number in `agent/VERSION`, commit, then run `tools/release.sh`. It builds the package, publishes the signed apt folder to the `gh-pages` branch (served at `https://sharjeelmazhar.github.io/Curfew/apt`, which is what `sudo apt update` reads on the laptops) and creates a GitHub release with the package and the app. `tools/release.sh build` only builds into `dist/`.
+
+The apt folder is signed with the key in `.apt-key/`, which is not in git. Keep a copy of that folder: without it no update can be published that the laptops will accept, and anyone who has it can publish software that the laptops install as administrator.
 
 The app's signing key (`android/curfew-release.jks`) is created by the first build and is not in git. Keep it: an APK signed with a different key cannot update the installed app.

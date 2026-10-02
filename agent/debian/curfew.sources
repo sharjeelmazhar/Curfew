@@ -1,0 +1,5 @@
+# Where new versions of Curfew come from. Installed by the curfew package.
+Types: deb
+URIs: https://sharjeelmazhar.github.io/Curfew/apt
+Suites: ./
+Signed-By: /usr/share/keyrings/curfew-archive-keyring.gpg
