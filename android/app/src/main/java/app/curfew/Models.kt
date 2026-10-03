@@ -42,9 +42,14 @@ data class SharedLimit(
 /** Which notifications the parent wants. */
 data class AlertPrefs(val logins: Boolean = true, val tamper: Boolean = true, val limits: Boolean = true)
 
+/** [pending]: accounts in a shared limit whose computer has not been given it yet (it was off).
+ *  [released]: accounts this phone took out of a shared limit, whose computer still counts the
+ *  others' time until it is told otherwise. Only these are corrected by the phone, so two phones
+ *  paired to the same computer never undo each other. */
 data class StoreData(
     val computers: List<Computer> = emptyList(), val goodbyes: List<Goodbye> = emptyList(),
     val shared: List<SharedLimit> = emptyList(), val prefs: AlertPrefs = AlertPrefs(),
+    val pending: Set<Account> = emptySet(), val released: Set<Account> = emptySet(),
 ) {
 
     fun toJson(): String = JSONObject()
@@ -62,7 +67,17 @@ data class StoreData(
                 .put("members", JSONArray(g.members.map { JSONArray().put(it.computerId).put(it.user) }))
         }))
         .put("prefs", JSONObject().put("logins", prefs.logins).put("tamper", prefs.tamper).put("limits", prefs.limits))
+        .put("pending", accountsJson(pending)).put("released", accountsJson(released))
         .toString()
+
+    private fun accountsJson(a: Set<Account>) = JSONArray(a.map { JSONArray().put(it.computerId).put(it.user) })
+
+    /** The shared limits are now [next]: whoever left one is [released], whoever is in one is not. */
+    private fun regroup(next: List<SharedLimit>): StoreData {
+        val before = shared.flatMap { it.members }.toSet()
+        val after = next.flatMap { it.members }.toSet()
+        return copy(shared = next, released = released - after + (before - after), pending = pending.filter { it in after }.toSet())
+    }
 
     /** The shared limit [account] belongs to, if any. */
     fun sharedOf(account: Account) = shared.find { account in it.members }
@@ -73,11 +88,15 @@ data class StoreData(
     fun withShared(account: Account, others: Set<Account>, minutes: Int, action: String, warn: Boolean, tell: Boolean, id: String): StoreData {
         val all = others + account
         val rest = shared.map { it.copy(members = it.members - all) }.filter { it.members.size > 1 }
-        return copy(shared = if (others.isEmpty()) rest else rest + SharedLimit(id, all, minutes, action, warn, tell))
+        return regroup(if (others.isEmpty()) rest else rest + SharedLimit(id, all, minutes, action, warn, tell))
     }
 
     fun withoutShared(account: Account) =
-        copy(shared = shared.map { it.copy(members = it.members - account) }.filter { it.members.size > 1 })
+        regroup(shared.map { it.copy(members = it.members - account) }.filter { it.members.size > 1 })
+
+    fun withPending(accounts: Set<Account>) = copy(pending = pending + accounts.filter { a -> shared.any { a in it.members } })
+    fun withoutPending(a: Account) = copy(pending = pending - a)
+    fun withoutReleased(a: Account) = copy(released = released - a)
 
     /** Adds a freshly paired computer. Pairing the same computer again replaces the old
      *  entry and queues a goodbye for the old key. */
@@ -93,10 +112,11 @@ data class StoreData(
     /** Removes a computer from the list at once and remembers to tell it. */
     fun withRemoved(id: String, now: Long): StoreData {
         val c = computers.find { it.id == id } ?: return this
-        return copy(
-            computers = computers - c, goodbyes = goodbyes + Goodbye(c.id, c.phoneId, c.key, c.host, c.port, now),
-            shared = shared.map { g -> g.copy(members = g.members.filter { it.computerId != id }.toSet()) }.filter { it.members.size > 1 },
-        )
+        return regroup(shared.map { g -> g.copy(members = g.members.filter { it.computerId != id }.toSet()) }.filter { it.members.size > 1 })
+            .let { s -> s.copy(
+                computers = computers - c, goodbyes = goodbyes + Goodbye(c.id, c.phoneId, c.key, c.host, c.port, now),
+                released = s.released.filter { it.computerId != id }.toSet(), pending = s.pending.filter { it.computerId != id }.toSet(),
+            ) }
     }
 
     /** A blank [alias] goes back to the computer's own name. */
@@ -117,6 +137,9 @@ data class StoreData(
             val gs = j.optJSONArray("goodbyes") ?: JSONArray()
             val sh = j.optJSONArray("shared") ?: JSONArray()
             val pr = j.optJSONObject("prefs") ?: JSONObject()
+            fun accounts(k: String) = (j.optJSONArray(k) ?: JSONArray()).let { a ->
+                (0 until a.length()).mapNotNull { a.optJSONArray(it) }.map { Account(it.optString(0), it.optString(1)) }.toSet()
+            }
             StoreData(
                 (0 until cs.length()).map { cs.getJSONObject(it) }.map {
                     val users = it.optJSONObject("users") ?: JSONObject()
@@ -136,6 +159,7 @@ data class StoreData(
                     )
                 }.filter { it.members.size > 1 && it.minutes > 0 },
                 AlertPrefs(pr.optBoolean("logins", true), pr.optBoolean("tamper", true), pr.optBoolean("limits", true)),
+                accounts("pending"), accounts("released"),
             )
         } catch (e: Exception) {
             StoreData()
