@@ -110,7 +110,8 @@ fun LockScreen(onUnlock: () -> Unit) {
                 Icon(painterResource(R.drawable.ic_mark), null, Modifier.size(56.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
             }
             Spacer(Modifier.size(20.dp))
-            Text("Curfew is locked", style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
+            // not inside a Surface, so the colour must be given: the default is black, unreadable in dark mode
+            Text("Curfew is locked", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface, textAlign = TextAlign.Center)
             Spacer(Modifier.size(8.dp))
             Text(
                 "Only the owner of this phone can open it.",

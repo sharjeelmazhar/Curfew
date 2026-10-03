@@ -34,7 +34,9 @@ def check(name, cond):
 
 
 def start(fake=None):
-    env = dict(ENV, CURFEW_FAKE=HERE + "/../tools/demo/%s.json" % fake) if fake else ENV
+    if fake and not fake.startswith("/"):
+        fake = HERE + "/../tools/demo/%s.json" % fake
+    env = dict(ENV, CURFEW_FAKE=fake) if fake else ENV
     p = subprocess.Popen([sys.executable, HERE + "/curfew.py", "serve"], env=env, stderr=LOG)
     for _ in range(50):
         try:
@@ -45,11 +47,11 @@ def start(fake=None):
     raise SystemExit("agent did not start")
 
 
-def http(method, path, body=None, raw=None):
+def http(method, path, body=None, raw=None, timeout=5):
     data = raw if raw is not None else (json.dumps(body).encode() if body is not None else None)
     req = urllib.request.Request(BASE + path, data=data, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=5) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.status, json.loads(r.read())
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read() or b"{}")
@@ -100,14 +102,14 @@ def pair(code, name, use_code=None):
     return 200, {"phone": r["phone"], "key": key, "info": json.loads(r["payload"])}
 
 
-def call(ph, op, envelope_only=False, **args):
+def call(ph, op, envelope_only=False, timeout=5, **args):
     s, c = nonce(), secrets.token_hex(16)
     payload = json.dumps(dict(args, op=op))
     env = {"phone": ph["phone"], "snonce": s, "cnonce": c, "payload": payload,
            "mac": mac(ph["key"], "req", ph["phone"], s, c, payload)}
     if envelope_only:
         return env
-    status, r = http("POST", "/v1/call", env)
+    status, r = http("POST", "/v1/call", env, timeout=timeout)
     if status != 200:
         return status, r
     assert r["mac"] == mac(ph["key"], "res", ph["phone"], s, c, r["payload"]), "response not authentic"
@@ -163,8 +165,9 @@ def radio(n, kind, soft):
         with open("%s/rfkill%d/%s" % (rf, n, name), "w") as f:
             f.write(text + "\n")
 soft = lambda n: open("%s/rfkill%d/soft" % (rf, n)).read().strip()
-real = (curfew.RFKILL_DIR, curfew.sessions, curfew.human_users, curfew.act, curfew.notify, curfew.DRY)
-did, told = [], []
+real = (curfew.RFKILL_DIR, curfew.sessions, curfew.human_users, curfew.act, curfew.notify, curfew.DRY, curfew.event_add)
+did, told, events = [], [], []
+curfew.event_add = lambda kind, **f: events.append((kind, f))
 curfew.RFKILL_DIR, curfew.DRY = rf, False
 curfew.human_users = lambda: [{"name": "dad", "admin": True}, {"name": KID, "admin": False}]
 curfew.act = lambda what, argv: did.append(argv) or True
@@ -186,12 +189,35 @@ check("switching it off again and again locks the screen", ["loginctl", "lock-se
 check("the account's own 'never lock' setting is put back before locking",
       any(a[-4:] == ["set", "org.gnome.desktop.lockdown", "disable-lock-screen", "false"] and a[:3] == ["runuser", "-u", KID] for a in did))
 del did[:]
+curfew._reported[(KID, "airplane")] -= 120         # as if a few minutes had gone by
 radio(1, "wlan", "1"); curfew.keep_wifi_on(strikes, 400); radio(1, "wlan", "1"); curfew.keep_wifi_on(strikes, 500); radio(1, "wlan", "1"); curfew.keep_wifi_on(strikes, 600)
 check("now and then over a long time does not lock", not any("lock-session" in a for a in did))
 radio(1, "wlan", "1")
 curfew.sessions = lambda: []
 check("airplane mode at the login screen is undone too", curfew.keep_wifi_on([], 0) is True and soft(1) == "0")
-curfew.RFKILL_DIR, curfew.sessions, curfew.human_users, curfew.act, curfew.notify, curfew.DRY = real
+check("airplane mode is reported to the phones, the same one at most once a minute",
+      [e for e in events if e[0] == "tamper"] == [("tamper", {"user": KID, "what": "airplane"}), ("tamper", {"user": KID, "what": "airplane"}),
+                                                   ("tamper", {"user": None, "what": "airplane"})])
+
+# --- a child trying to change the network, as NetworkManager writes it down
+del events[:]
+real_pw = curfew.pwd.getpwuid
+curfew.pwd.getpwuid = lambda uid: type("P", (), {"pw_name": {1001: KID, 1000: "dad"}[uid]})
+line = lambda op, uid, result="fail", reason="org.freedesktop.NetworkManager.network-control request failed: not authorized": (
+    '<info>  [1790933143.4851] audit: op="%s" interface="wlp2s0" ifindex=2 pid=25404 uid=%d result="%s"' % (op, uid, result)
+    + (' reason="%s"' % reason if reason else ""))
+check("a refused disconnect by a child is noticed", curfew.nm_refused(line("device-disconnect", 1001)) == (KID, "disconnect"))
+check("a refused new Wi-Fi password is noticed", curfew.nm_refused(line("connection-update", 1001, reason="Insufficient privileges")) == (KID, "wifi_settings"))
+check("turning the Wi-Fi off is noticed", curfew.nm_refused(line("radio-control", 1001)) == (KID, "wifi_off"))
+check("anything else refused counts as changing the network", curfew.nm_refused(line("checkpoint-create", 1001)) == (KID, "network"))
+check("what an administrator does is not reported", curfew.nm_refused(line("device-disconnect", 1000)) is None)
+check("what went through is not reported", curfew.nm_refused(line("device-disconnect", 1001, "success", None)) is None)
+check("a failure for another reason is not reported", curfew.nm_refused(line("connection-activate", 1001, reason="no secrets")) is None)
+check("other lines are ignored", curfew.nm_refused("<info> device (wlp2s0): state change: activated") is None)
+check("tries are reported once a minute at most", curfew.report(KID, "disconnect") and not curfew.report(KID, "disconnect")
+      and curfew.report(KID, "wifi_settings") and len(events) == 2)
+curfew.pwd.getpwuid = real_pw
+curfew.RFKILL_DIR, curfew.sessions, curfew.human_users, curfew.act, curfew.notify, curfew.DRY, curfew.event_add = real
 shutil.rmtree(rf, ignore_errors=True)
 
 agent = start()
@@ -410,6 +436,151 @@ try:
     r = call(a, "login", user="dad")[1]
     check("login for an account that is not logged in waits at the login screen", r["how"] == "approved" and r["seconds"] == 120)
     check("login for an open session unlocks it", call(a, "login", user="classes")[1]["how"] == "unlocked")
+    # --- watching: the phone keeps a call open and hears of what happens within a second
+    agent.terminate(); agent.wait()
+    kids = TMP + "/kids.json"
+    shutil.copy(HERE + "/../tools/demo/kids.json", kids)
+    def kids_set(**states):
+        d = json.load(open(kids))
+        for u in d["users"]:
+            u["state"] = states.get(u["name"], u["state"])
+        json.dump(d, open(kids + ".tmp", "w")); os.replace(kids + ".tmp", kids)
+    agent = start(fake=kids)
+    import threading
+    def watch_in_background(**args):
+        box = {}
+        def go():
+            t = time.monotonic()
+            box["r"] = call(a, "watch", timeout=40, **args)[1]
+            box["took"] = time.monotonic() - t
+        th = threading.Thread(target=go); th.start()
+        time.sleep(0.5)
+        return box, th
+    s = call(a, "status")[1]
+    check("status says it can be watched and keeps limits, and which day it is", {"watch", "limits"} <= set(s["caps"])
+          and s["date"] == curfew.kept_days(time.time())[0])
+    w = call(a, "watch", after=-1, wait=30)[1]
+    check("a first watch answers at once with where the numbering stands", w["ok"] and w["events"] == [] and w["bye"] is None
+          and isinstance(w["epoch"], str) and w["seq"] >= 0 and w["status"]["ok"])
+    check("bad watch arguments are refused", call(a, "watch", after=0, wait=61)[1] == {"ok": False, "error": "bad_args"}
+          and call(a, "watch", after="x", wait=1)[1] == {"ok": False, "error": "bad_args"})
+    ep, seq = w["epoch"], w["seq"]
+    t = time.monotonic()
+    w = call(a, "watch", after=seq, epoch=ep, wait=2, timeout=10)[1]
+    check("with nothing happening a watch answers after its wait", w["events"] == [] and 1.8 <= time.monotonic() - t < 4
+          and w["status"]["users"])
+    box, th = watch_in_background(after=seq, epoch=ep, wait=30)
+    kids_set(dad="active", gaming="logged_in")
+    th.join(35)
+    got = box["r"]["events"]
+    check("a login is told within seconds", box["took"] < 5 and [(e["type"], e["user"]) for e in got] == [("login", "dad")]
+          and abs(got[0]["start"] - time.time()) < 10 and got[0]["seq"] == seq + 1)
+    check("the watch answer carries the new status", {u["name"]: u["state"] for u in box["r"]["status"]["users"]}["dad"] == "active")
+    seq = box["r"]["seq"]
+    box, th = watch_in_background(after=seq, epoch=ep, wait=30)
+    w = call(a, "watch", after=seq, epoch=ep, wait=0)[1]
+    th.join(5)
+    check("a newer watch from the same phone ends the older one", not th.is_alive() and box["took"] < 3 and box["r"]["events"] == [])
+    box, th = watch_in_background(after=seq, epoch=ep, wait=30)
+    cli("fake", "tamper", "gaming", "wifi_off")
+    th.join(10)
+    check("a try to change the network is told", [(e["type"], e["user"], e["what"]) for e in box["r"]["events"]] == [("tamper", "gaming", "wifi_off")]
+          and box["took"] < 3)
+    seq = box["r"]["seq"]
+    agent.terminate(); agent.wait()
+    check("events are kept on disk, privately", oct(os.stat(TMP + "/events.json").st_mode & 0o777) == "0o600")
+    agent = start(fake=kids)
+    w = call(a, "watch", after=seq - 2, epoch=ep, wait=5)[1]
+    check("a phone that was away gets what it missed", [e["type"] for e in w["events"]] == ["login", "tamper"] and w["seq"] == seq)
+    w = call(a, "watch", after=0, epoch="someotherepoch", wait=5)[1]
+    check("a phone from another numbering starts from now", w["events"] == [] and w["seq"] == seq)
+    box, th = watch_in_background(after=seq, epoch=ep, wait=30)
+    cli("fake", "bye", "sleep")
+    th.join(10)
+    check("going to sleep is told at once", box["r"]["bye"] == "sleep" and box["took"] < 3 and "status" not in box["r"])
+    check("while asleep a watch answers at once", call(a, "watch", after=seq, epoch=ep, wait=20)[1]["bye"] == "sleep")
+    cli("fake", "bye", "back")
+    time.sleep(1)
+    check("after waking up it waits again", call(a, "watch", after=seq, epoch=ep, wait=1, timeout=10)[1]["bye"] is None)
+    box, th = watch_in_background(after=seq, epoch=ep, wait=30)
+    agent.terminate(); agent.wait()
+    th.join(5)
+    check("when the agent stops, the phone is told before it goes", box["r"]["bye"] == "restart" and box["took"] < 3)
+
+    # --- screen-time limits
+    agent = start(fake=kids)
+    kids_set(dad="none", gaming="active")
+    time.sleep(2.5)
+    check("no limit for an admin", call(a, "limit_set", user="dad", minutes=60)[1] == {"ok": False, "error": "is_admin"})
+    check("no limit for an unknown account", call(a, "limit_set", user="x", minutes=60)[1] == {"ok": False, "error": "bad_user"})
+    check("bad limits are refused", all(call(a, "limit_set", user="gaming", **k)[1] == {"ok": False, "error": "bad_args"} for k in
+          ({"minutes": 0}, {"minutes": 1441}, {"minutes": "60"}, {"minutes": True}, {"minutes": 60, "action": "explode"})))
+    r = call(a, "limit_set", user="gaming", minutes=60, action="logout", warn=True, tell=False)[1]
+    lim = r["limit"]
+    check("a limit is set", r["ok"] and lim["minutes"] == 60 and lim["action"] == "logout" and lim["warn"] and not lim["tell"]
+          and 3500 < lim["left"] <= 3600 and lim["extra"] == 0 and lim["elsewhere"] == 0)
+    u = users()
+    check("status shows the limit, and none where there is none", u["gaming"]["limit"]["minutes"] == 60 and "limit" not in u["classes"])
+    left = u["gaming"]["limit"]["left"]
+    r = call(a, "limit_extra", user="gaming", minutes=15)[1]
+    check("extra time today adds to what is left", r["ok"] and r["limit"]["extra"] == 900 and abs(r["limit"]["left"] - left - 900) < 5)
+    check("extra time needs a limit", call(a, "limit_extra", user="classes", minutes=15)[1] == {"ok": False, "error": "no_limit"})
+    check("bad extra time is refused", call(a, "limit_extra", user="gaming", minutes=0)[1] == {"ok": False, "error": "bad_args"})
+    today = curfew.kept_days(time.time())[0]
+    r = call(a, "limit_elsewhere", date=today, users={"gaming": 600, "classes": 50})[1]
+    u = users()["gaming"]["limit"]
+    check("time on other accounts counts against a shared limit", r == {"ok": True, "applied": True} and u["elsewhere"] == 600
+          and abs(u["left"] - (left + 900 - 600)) < 5 and "elsewhere" not in state()["limits"].get("classes", {}))
+    r = call(a, "limit_elsewhere", date="2020-01-01", users={"gaming": 6000})[1]
+    check("time elsewhere for another day is not counted", r == {"ok": True, "applied": False} and users()["gaming"]["limit"]["elsewhere"] == 600)
+    check("bad time elsewhere is refused", call(a, "limit_elsewhere", date=today, users={"gaming": -1})[1]["ok"] is False
+          and call(a, "limit_elsewhere", date=today, users=[1])[1]["ok"] is False)
+    check("a limit is cleared", call(a, "limit_clear", user="gaming")[1] == {"ok": True, "limit": None} and "limit" not in users()["gaming"]
+          and state()["limits"] == {})
+
+    # running out: 50 seconds used of a 1-minute limit, with warnings; the grace is 2 s in this test
+    agent.terminate(); agent.wait()
+    use = json.load(open(TMP + "/usage.json"))
+    use["users"]["gaming"]["days"][today]["used"] = 50
+    json.dump(use, open(TMP + "/usage.json", "w"))
+    agent.terminate(); agent.wait()
+    ENV["CURFEW_LIMIT_GRACE"] = "2"
+    agent = start(fake=kids)
+    w = call(a, "watch", after=-1, wait=0)[1]
+    ep, seq = w["epoch"], w["seq"]
+    mark = os.path.getsize(TMP + "/agent.log")
+    since = lambda: (LOG.flush(), open(TMP + "/agent.log").read()[mark:])[1]
+    call(a, "limit_set", user="gaming", minutes=1, action="poweroff", warn=True, tell=True)
+    time.sleep(3)
+    check("they are warned a minute before", "would notify gaming: 1 minute of screen time is left for today." in since())
+    w = call(a, "watch", after=seq, epoch=ep, wait=25, timeout=30)[1]
+    ev = [e for e in w["events"] if e["type"] == "limit"]
+    check("when it runs out the phone is told", len(ev) == 1 and ev[0]["user"] == "gaming" and ev[0]["minutes"] == 1
+          and ev[0]["used"] >= 60 and ev[0]["action"] == "poweroff" and ev[0]["tell"] and not ev[0]["again"])
+    check("and they are told it is ending", "would notify gaming: Your screen time for today is used up. The computer shuts down in 1 minute." in since())
+    time.sleep(3.5)
+    check("after the grace the computer shuts down", "would power off" in since() and since().count("would power off") == 1)
+    check("status shows nothing left", users()["gaming"]["limit"]["left"] == 0)
+    seq = w["seq"]
+    kids_set(gaming="none"); time.sleep(2.5)
+    mark = os.path.getsize(TMP + "/agent.log")
+    kids_set(gaming="active", classes="active")      # back again the same day, and someone else on the screen too
+    w = call(a, "watch", after=seq, epoch=ep, wait=15, timeout=20)[1]
+    while not any(e["type"] == "limit" for e in w["events"]):
+        w = call(a, "watch", after=w["seq"], epoch=ep, wait=15, timeout=20)[1]
+    check("logging in again the same day ends again, and says so", [e for e in w["events"] if e["type"] == "limit"][0]["again"])
+    time.sleep(3.5)
+    check("with someone else on the screen only that account is logged out",
+          "would log out gaming: screen time used up" in since() and "would power off" not in since())
+    kids_set(gaming="none", classes="locked"); time.sleep(2.5)
+    kids_set(gaming="active"); time.sleep(2.5)
+    mark = os.path.getsize(TMP + "/agent.log")
+    r = call(a, "limit_extra", user="gaming", minutes=10)[1]
+    time.sleep(3.5)
+    check("more time given while it is ending stops it", r["limit"]["left"] > 500 and "would power off" not in since()
+          and "would log out" not in since() and "would notify gaming: Your parent gave you 10 minutes more today." in since())
+    call(a, "limit_clear", user="gaming")
+    del ENV["CURFEW_LIMIT_GRACE"]
     agent.terminate(); agent.wait()
     agent = start()
 
@@ -427,4 +598,4 @@ try:
 finally:
     agent.terminate()
     LOG.close()
-    shutil.rmtree(TMP, ignore_errors=True)
+    shutil.rmtree(TMP, ignore_errors=True) if not os.environ.get("KEEP") else print(TMP)

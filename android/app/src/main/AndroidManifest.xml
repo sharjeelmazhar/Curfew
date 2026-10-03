@@ -10,6 +10,11 @@
     <!-- Android before 12 runs the background look at the computers as a short foreground task -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- stays in touch with the computers while the app is closed, to tell of a login at once -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- usesCleartextTraffic: the agent speaks plain HTTP on the home Wi-Fi; every message is signed. -->
     <application
@@ -30,12 +35,31 @@
             android:name=".MainActivity"
             android:exported="true"
             android:screenOrientation="portrait"
+            android:launchMode="singleTop"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".WatchService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps a connection open to the family's computers on the home Wi-Fi, to tell the parent at once when a child logs in" />
+        </service>
+
+        <receiver android:name=".NudgeReceiver" android:exported="false" />
+
+        <receiver android:name=".BootReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <service
             android:name="androidx.work.impl.foreground.SystemForegroundService"

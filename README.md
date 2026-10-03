@@ -79,7 +79,7 @@ The code works once, for one phone, and expires after two minutes, so a photo of
 
 - **Home screen:** one card per laptop. A glowing green power light means it is on; a dim one means off or out of reach. The line below says who is using it. For a laptop that is off it says when the phone last saw it. If a countdown is running you see it here.
 - **Tap a laptop:** Shut down, Restart, the shut-down timer, and the list of accounts on that laptop with what each is doing (not logged in, logged in in the background, in use right now, screen locked). After "Switch user", both accounts are logged in and both are shown: the one on the screen has a green dot, the one left in the background an orange dot. Under each name you see since when it is logged in and how long it was used today. **Screen time** at the bottom opens the times for every account.
-- **Tap an account:** Log in without the password, Lock screen, Log out, a shut-down timer for the computer, the internet for that account, and what that person has open at the moment.
+- **Tap an account:** its daily limit, Log in without the password, Lock screen, Log out, a shut-down timer for the computer, the internet for that account, and what that person has open at the moment.
 - **The pencil** at the top of a laptop or an account gives it a name of your own ("Fatima's computer", "Gaming"). The name exists only in the app; nothing changes on the laptop.
 
 The timers are silent unless you turn on **Warn them first**, which shows a notice on the laptop when the timer starts and again one minute before the end.
@@ -116,11 +116,27 @@ Time counts while the account is on the screen and unlocked. A locked screen doe
 
 The phone keeps a copy of the last screen time it saw. When a laptop is shut down or away from home, its page still has **Screen time**, showing that copy and when it was saved ("Last seen 8:55 PM"). As soon as the laptop is back, the numbers are up to date again: the laptop keeps counting even when it has no internet, and the phone picks it all up next time.
 
-### Told when someone logs in
+### Notifications
 
-The phone tells you when someone logs in on a laptop, with a notification such as "Ali logged in · On kids-laptop at 8:55 PM". This includes admin accounts. A login you allowed from the phone with **Log in without the password** is not announced. The first time you open this version, tap **Allow notifications** on the home screen.
+The phone tells you, within a few seconds, when:
 
-While the app is open, you are told within seconds. While it is closed, the phone looks every 15 minutes (the most often Android allows), so a notification can come up to 15 minutes late. It shows the time of the login, not the time you were told. If your phone was away from home, or the laptop had no Wi-Fi, you are told about the login when both are home again. On Xiaomi/Redmi phones, also turn on **Autostart** for Curfew in the phone's settings, or the phone may not let it look while closed.
+- someone logs in on a laptop ("Ali logged in · On kids-laptop at 8:55 PM"), admin accounts included. A login you allowed from the phone with **Log in without the password** is not announced
+- someone tries to cut the laptop off the network: airplane mode, turning the Wi-Fi off, disconnecting, a new Wi-Fi password, another network ("Ali tried to turn off the Wi-Fi · It was not allowed")
+- an account's daily screen time runs out (see **Daily limit** below), if you chose to be told
+
+This works with the app closed too: Curfew stays in touch with the laptops and the laptop tells the phone the moment something happens, the way a chat app gets its messages. Android then shows a quiet notice, **Watching 1 computer**, which you can hide by holding it. The first time, tap **Allow notifications** and **Allow** (to run in the background) on the home screen. On Xiaomi, Redmi and POCO phones also turn on **Autostart** for Curfew: the button is under the bell, **If notifications come late**.
+
+The **bell** at the top of the home screen keeps every notification of the last 30 days, also the ones you swiped away or missed, with a number for the new ones. Tap one to go to that account. **Clear all** empties the list. Below the list you choose what you want to be told about.
+
+If your phone was away from home, or the laptop had no Wi-Fi, you are told when both are home again; the notification shows when it happened, not when you were told. When a laptop shuts down, restarts or goes to sleep, the app shows that at once ("Shut down", "Asleep").
+
+### Daily limit
+
+On an account's page, **No daily limit** opens the limit: how long that account may be used each day (30 minutes to 12 hours), and what happens when the time is up: **Shut down the computer**, or **Log them out**. Time counts the same way as screen time: on the screen and unlocked. With **Warn them first** they get a notice 5 minutes and 1 minute before; when the time is up they get a notice and one more minute to save their work. If someone else is on the screen by then (after "Switch user"), only their account is logged out instead of shutting down. **Tell me when the time is up** sends you a notification.
+
+**Count together with** joins the same child's accounts, on one laptop or several ("Fatima Class" and "Fatima Gaming"): the time on all of them adds up to one limit, and whichever one they are on when it runs out is the one that ends.
+
+The limit lives on the laptop, so it works with your phone away. Only for a limit counted together does the laptop need the phone at home now and then, to hear how long the other accounts were used. Logging in again the same day ends again after a minute (and you are told). The account's page shows how much is left, and **More time today** adds 15 minutes, 30 minutes or an hour, for today only. Admin accounts cannot have a limit.
 
 ### Internet for one account
 
@@ -133,6 +149,7 @@ What the status line means:
 | *Name* is using it | That person is logged in and in front of it |
 | On, nobody logged in | The laptop is at the login screen |
 | Off | Shut down, asleep, or not connected to the Wi-Fi |
+| Shut down / Asleep / Restarting… | The laptop said so as it went |
 | This phone is not on Wi-Fi / not on the home Wi-Fi | Curfew only works at home, on the same Wi-Fi as the laptops |
 | On, but Curfew is not running on it | Restart the laptop; if it stays, run `sudo apt install --reinstall curfew` |
 | Needs pairing again | The laptop was reinstalled. Remove it in the app and pair it again |
@@ -184,7 +201,7 @@ It removes the service and everything it set up or stored, and the laptop is as 
 It is a remote control, not a lock. A determined child can still:
 
 - turn the laptop back on after you shut it down (lock or log out their account, or set the timer again)
-- cut the laptop off from the network with a Wi-Fi switch on the laptop's case, or by pulling the cable on a desktop; the app then shows **Off** and you cannot reach it, including for a timer you have not yet set (a timer that is already running still fires, it lives on the laptop). **Airplane mode no longer works for this:** in a standard account, or at the login screen, the laptop turns its Wi-Fi back on within a few seconds and tells them so, and after three tries in two minutes it locks the screen. In an admin account airplane mode works as usual. They can also no longer join another Wi-Fi, type a new Wi-Fi password, forget a network, change the address or DNS, or turn Wi-Fi off: after installing, only an admin account can do any of that
+- cut the laptop off from the network with a Wi-Fi switch on the laptop's case, or by pulling the cable on a desktop; the app then shows **Off** and you cannot reach it, including for a timer you have not yet set (a timer that is already running still fires, it lives on the laptop). **Airplane mode no longer works for this:** in a standard account its button is gone from the menu at the top right (from the next login after installing), and if it is switched on any other way (the Settings app, a key on the keyboard, the login screen) the laptop turns its Wi-Fi back on within a moment, tells them so and tells your phone; after three tries in two minutes it locks the screen. In an admin account airplane mode works as usual. They can also no longer join another Wi-Fi, type a new Wi-Fi password, forget a network, change the address or DNS, or turn Wi-Fi off: after installing, only an admin account can do any of that
 - start the laptop from a USB stick or another system if the firmware (BIOS) allows it
 - learn the admin password; anyone with it can remove Curfew
 - become administrator without any password by starting the laptop in recovery mode (hold Shift or press Esc while it starts). Only a password on the boot menu (GRUB) stops this

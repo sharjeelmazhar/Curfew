@@ -78,10 +78,48 @@ Unauthenticated refusals (HTTP 4xx, treat as hints only): `unknown_phone`, `bad_
 | `net_set` | `user`, `seconds` (0 = now, or 10-86400), `warn` | internet off for that account, now or after the countdown |
 | `net_clear` | `user` | internet back on, countdown cancelled |
 | `forget` | | removes the calling phone |
+| `watch` | `after` (int, -1 for "from now"), `epoch` (string or absent), `wait` (0-60) | `epoch`, `seq`, `events`, `bye`, `status` (see below) |
+| `limit_set` | `user`, `minutes` (1-1440), `action` (`poweroff` or `logout`), `warn`, `tell` (bools) | `limit` |
+| `limit_clear` | `user` | `limit: null` |
+| `limit_extra` | `user`, `minutes` (1-720) | `limit`: that many more minutes today |
+| `limit_elsewhere` | `date` (`2026-10-03`), `users: {name: seconds}` | `applied` (false when `date` is not today there) |
 
 `caps` lists what this agent can do: `seconds` (timers in seconds), `net` (iptables is present),
 `login` (the login screen is set up to ask the agent), `browsers` (the agent can read browser
-history), `usage` (the agent keeps screen time). An agent without `caps` is the first version.
+history), `usage` (the agent keeps screen time), `watch` (the `watch` op and events), `limits`
+(screen-time limits). An agent without `caps` is the first version. `status` also has `date`, the
+computer's today (`2026-10-03`), and for an account with a limit, `limit` as below.
+
+Watching: a phone keeps one `watch` call open per computer. It is answered as soon as there are
+events numbered above `after`, or when the computer goes away, or after `wait` seconds, and then
+the phone asks again with `after` set to the `seq` it got. Events are numbered within an `epoch`
+(a string that changes only when the computer's list of events was lost); with another `epoch`, or
+`after` -1, the answer comes at once with no events and the `seq` to continue from. A newer
+`watch` from the same phone answers the older one at once. `status` is the full `status` answer
+(left out when `bye` is set). `bye` is null, or why the computer is going away right now:
+`shutdown`, `reboot`, `sleep` (the system-sleep hook) or `restart` (only the Curfew service
+restarts, as in an update). Events, oldest first, at most 100, kept for 3 days:
+
+- `{"seq", "time", "type": "login", "user", "start"}`: an account logged in.
+- `{"seq", "time", "type": "tamper", "user", "what"}`: someone tried to cut the network. `user`
+  is null at the login screen. `what` is `airplane` (undone at once), `wifi_off`, `network_off`,
+  `disconnect`, `wifi_settings` (a password or other setting), `forget_network`,
+  `other_network` or `network`; all but `airplane` were refused. The same try by the same
+  account is told once a minute at most.
+- `{"seq", "time", "type": "limit", "user", "minutes", "used", "action", "tell", "again"}`: the
+  account's screen time ran out while it was on the screen; `action` follows in a minute. `again`
+  is true when it already ran out earlier that day. `tell` is the limit's own setting: whether the
+  parent wants a notification for it.
+
+Screen-time limits: `limit` is `{minutes, action, warn, tell, extra, elsewhere, used, left}`.
+Time counts as in screen time (`used`: on the screen and unlocked), plus `elsewhere`, the seconds
+the phone says the same child spent today on other accounts (`limit_elsewhere`; for one limit
+shared by several accounts or computers), against `minutes` plus `extra` (`limit_extra`, today
+only). When `left` reaches 0 while the account is on the screen, it gets a notice and a minute
+later the computer shuts down (`poweroff`), or the account is logged out (`logout`, and also for
+`poweroff` when someone else is on the screen by then). With `warn`, notices come at 5 minutes and
+at 1 minute left. Admin accounts cannot have a limit (`is_admin`); `limit_extra` without a limit is
+`no_limit`.
 
 Screen time: `used` is seconds with the account on the screen and unlocked (`state` was `active`),
 `on` is seconds logged in at all. In `status`, `since` is when the account's current login began
@@ -103,7 +141,7 @@ always `on`.
 
 `state` is `none`, `logged_in`, `locked` or `active`. `remaining` and `age` are seconds, so
 clients never compare clocks. Failures are authenticated too: `{"ok": false, "error": ...}` with
-`bad_op`, `bad_user`, `bad_args`, `not_logged_in`, `is_admin`, `unsupported`, `failed`, or **`unpaired`**: the phone was
+`bad_op`, `bad_user`, `bad_args`, `not_logged_in`, `is_admin`, `no_limit`, `unsupported`, `failed`, or **`unpaired`**: the phone was
 removed with `sudo curfew unpair`; it is signed with the old key so the client can trust it and
 drop the computer.
 

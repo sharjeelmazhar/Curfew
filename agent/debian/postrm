@@ -13,6 +13,10 @@ rm -rf /run/curfew
 rm -f /var/lib/curfew/passwords.json          # remembered login passwords never outlive the program
 rm -f /etc/avahi/services/curfew.service
 rm -f /etc/polkit-1/rules.d/10-curfew-network.rules /etc/polkit-1/localauthority/50-local.d/curfew-network.pkla
+if [ -e /etc/dconf/profile/curfew ] || [ -e /etc/dconf/db/curfew.d ]; then
+  rm -rf /etc/dconf/db/curfew.d /etc/dconf/db/curfew /etc/dconf/profile/curfew
+  command -v dconf >/dev/null && dconf update || true
+fi
 if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "787/tcp"; then
   ufw delete allow 787/tcp >/dev/null 2>&1 || true
 fi
