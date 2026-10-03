@@ -1,0 +1,24 @@
+Package: curfew
+Version: 1.1.10
+Architecture: all
+Maintainer: Sharjeel Mazhar <sharjeelmazhar@users.noreply.github.com>
+Installed-Size: 112
+Depends: python3 (>= 3.10), systemd, iptables
+Recommends: avahi-daemon, network-manager
+Filename: ./curfew_1.1.10_all.deb
+Size: 32660
+MD5sum: 297ebed7950a1a36ee8d2c35b4084200
+SHA1: f857c43c0228bc364349e6d20d8746a8bdc46d86
+SHA256: cd4fe3500c2be2aed94343b23b468f52693e3da9db988b4c395be2256970412c
+Section: admin
+Priority: optional
+Homepage: https://github.com/sharjeelmazhar/Curfew
+Description: See and control this computer from a paired phone at home
+ The laptop side of Curfew. A paired Android phone on the same Wi-Fi can see
+ who is logged in, shut the computer down now or after a countdown, lock or
+ log out an account, let an account in without its password being typed, and
+ turn the internet off for one account.
+ .
+ Installing this package also adds the Curfew package source, so later
+ versions arrive with "sudo apt update && sudo apt upgrade".
+
