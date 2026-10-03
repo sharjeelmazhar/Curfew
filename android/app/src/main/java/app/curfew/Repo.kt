@@ -3,18 +3,25 @@ package app.curfew
 import android.app.Application
 import android.content.Context
 import android.net.ConnectivityManager
+import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.os.Build
 import android.os.SystemClock
 import android.provider.Settings
+import android.util.Log
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
+import androidx.work.ForegroundInfo
 import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
+import androidx.work.workDataOf
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
@@ -97,8 +104,13 @@ class SecureFile(context: Context, name: String) {
 }
 
 object HttpTransport : Transport {
+    /** The network a background job was given. While the app is closed Android lets it reach the
+     *  Wi-Fi only through that network, not the phone's default one. */
+    @Volatile var network: Network? = null
+
     override fun send(to: Endpoint, path: String, body: String?): HttpResult {
-        val con = URL("http://${to.host}:${to.port}$path").openConnection() as HttpURLConnection
+        val url = URL("http://${to.host}:${to.port}$path")
+        val con = (network?.openConnection(url) ?: url.openConnection()) as HttpURLConnection
         try {
             con.connectTimeout = 2500
             con.readTimeout = 6000
@@ -191,7 +203,13 @@ class Repo(private val app: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val discovery = Discovery(app)
     private val _store = MutableStateFlow(StoreData.fromJson(file.read()))
-    private val _live = MutableStateFlow<Map<String, Live>>(emptyMap())
+    private val memoryFile = SecureFile(app, "memory")
+    private val _memory = MutableStateFlow(memoriesFromJson(memoryFile.read()))
+    private var memoryWritten = 0L
+    // the last known names and accounts, until the computer answers again
+    private val _live = MutableStateFlow(_memory.value.mapNotNull { (id, m) ->
+        m.status?.let { runCatching { parseStatus(JSONObject(it)) }.getOrNull() }?.let { id to Live(status = it) }
+    }.toMap())
     private var foreground = false
     private val locks = ConcurrentHashMap<String, Mutex>()
 
@@ -200,6 +218,8 @@ class Repo(private val app: Context) {
 
     val store: StateFlow<StoreData> = _store
     val live: StateFlow<Map<String, Live>> = _live
+    /** What the phone keeps about each computer, for when it cannot be reached. */
+    val memory: StateFlow<Map<String, Memory>> = _memory
     /** Short messages for the user that are not the direct result of a tap. */
     val notices = MutableSharedFlow<String>(extraBufferCapacity = 4)
 
@@ -212,15 +232,81 @@ class Repo(private val app: Context) {
         }
     }
 
+    /** Changes what the phone keeps about a computer. It goes to disk at most every 30 seconds,
+     *  or at once with [flush]. */
+    @Synchronized
+    private fun remember(id: String, flush: Boolean = false, change: (Memory) -> Memory) {
+        _memory.update { it + (id to change(it[id] ?: Memory())) }
+        if (flush || SystemClock.elapsedRealtime() - memoryWritten > 30_000) writeMemory()
+    }
+
+    @Synchronized
+    private fun forget(id: String) {
+        _memory.update { it - id }
+        writeMemory()
+    }
+
+    @Synchronized
+    private fun writeMemory() {
+        memoryWritten = SystemClock.elapsedRealtime()
+        memoryFile.write(memoriesToJson(_memory.value))
+    }
+
+    /** The last screen time the computer gave, with when it came (unix ms), or null if there is none. */
+    fun savedUsage(id: String): Pair<Usage, Long>? = _memory.value[id]?.let { m ->
+        m.usage?.let { runCatching { parseUsage(JSONObject(it)) to m.usageAt }.getOrNull() }
+    }
+
+    /** Announces the logins among [current] that the parent has not heard of yet. */
+    private fun watch(c: Computer, current: List<LoginSeen>) {
+        var news = emptyList<LoginSeen>()
+        val first = (_memory.value[c.id]?.watchFrom ?: 0L) == 0L
+        remember(c.id, flush = first) { m ->
+            news = m.news(current)
+            m.seen(current, System.currentTimeMillis() / 1000)
+        }
+        if (news.isEmpty()) return
+        writeMemory()                   // never announce the same login twice, even if the app is closed now
+        val users = _live.value[c.id]?.status?.users.orEmpty()
+        for (l in news) {
+            val name = c.userAliases[l.user] ?: users.find { it.name == l.user }?.display ?: l.user
+            Alerts.login(app, c.id, c.title, name, l)
+        }
+    }
+
     fun onForeground() {
         foreground = true
         discovery.start()
         scope.launch { deliverGoodbyes() }
+        WatchWorker.sync(app, _store.value.computers.isNotEmpty())
     }
 
     fun onBackground() {
         foreground = false
         discovery.stop()
+        scope.launch { writeMemory() }
+        if (BuildConfig.NO_LOCK) WatchWorker.soon(app)     // test builds: no 15-minute wait to see it work
+    }
+
+    /** A look at every computer while the app is closed: keeps the saved screen time fresh and
+     *  announces new logins. */
+    suspend fun lookInBackground(network: Network?) = withContext(Dispatchers.IO) {
+        if (foreground) return@withContext          // the open app is looking already
+        discovery.start()                           // a moved address is found within a few seconds
+        delay(4000)
+        HttpTransport.network = network
+        try {
+            for (c in _store.value.computers) {
+                refresh(c.id)
+                val live = _live.value[c.id]
+                if (live?.link == Link.ON && live.status?.caps?.contains("usage") == true) usage(c.id)
+                Log.i("Curfew", "background look at ${c.id}: ${live?.link}")
+            }
+        } finally {
+            HttpTransport.network = null
+            if (!foreground) discovery.stop()
+            writeMemory()
+        }
     }
 
     val phoneName: String
@@ -270,6 +356,7 @@ class Repo(private val app: Context) {
             Reply.Unpaired -> {
                 save { s -> s.copy(computers = s.computers.filter { it.id != c.id }) }
                 _live.update { it - c.id }
+                forget(c.id)
                 notices.tryEmit("“${c.title}” removed this phone, so it was taken off the list.")
             }
             Reply.NotRecognised -> setLive(c.id) { it.copy(link = Link.NOT_RECOGNISED, timerEndsAt = null) }
@@ -291,6 +378,8 @@ class Repo(private val app: Context) {
 
     private fun gotStatus(c: Computer, j: JSONObject) {
         val st = parseStatus(j)
+        remember(c.id) { it.copy(status = j.toString(), statusAt = System.currentTimeMillis()) }
+        watch(c, loginsOf(st))
         if (st.name != c.name) save { s -> s.copy(computers = s.computers.map { if (it.id == c.id) it.copy(name = st.name) else it }) }
         setLive(c.id) { old ->
             val now = SystemClock.elapsedRealtime()
@@ -328,6 +417,9 @@ class Repo(private val app: Context) {
         val (reply, ok) = serial(id) {
             val (reply, ep) = reach(c, payload)
             val ok = absorb(c, reply, ep)
+            if (ok != null && op == "login") (args["user"] as? String)?.let { user ->     // its login is not news
+                remember(id, flush = true) { it.copy(approved = it.approved + (user to System.currentTimeMillis() / 1000)) }
+            }
             if (ok != null && ok.has("timer")) setLive(id) { old ->     // show the new countdown at once
                 old.copy(timerEndsAt = ok.optJSONObject("timer")?.let { SystemClock.elapsedRealtime() + it.optInt("remaining") * 1000L })
             }
@@ -366,7 +458,10 @@ class Repo(private val app: Context) {
         val c = _store.value.computers.find { it.id == id } ?: return@withContext null
         serial(id) {
             val (reply, ep) = reach(c, JSONObject().put("op", "usage"))
-            absorb(c, reply, ep)?.let(::parseUsage)
+            absorb(c, reply, ep)?.let { j ->
+                remember(c.id) { it.copy(usage = j.toString(), usageAt = System.currentTimeMillis()) }
+                parseUsage(j).also { watch(c, loginsOf(it)) }
+            }
         }
     }
 
@@ -377,6 +472,7 @@ class Repo(private val app: Context) {
             save { it.withPaired(r.computer, now) }
             _live.update { it - r.computer.id }
             GoodbyeWorker.sync(app, _store.value.goodbyes.isNotEmpty())
+            WatchWorker.sync(app, true)
             scope.launch { refresh(r.computer.id) }
         }
         r
@@ -386,7 +482,9 @@ class Repo(private val app: Context) {
     fun remove(id: String) {
         save { it.withRemoved(id, System.currentTimeMillis()) }
         _live.update { it - id }
+        forget(id)
         GoodbyeWorker.sync(app, true)
+        WatchWorker.sync(app, _store.value.computers.isNotEmpty())
         scope.launch { deliverGoodbyes() }
     }
 
@@ -432,6 +530,52 @@ class GoodbyeWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.UNMETERED).build())
                 .build()
             wm.enqueueUniquePeriodicWork(NAME, ExistingPeriodicWorkPolicy.KEEP, request)
+        }
+    }
+}
+
+/** Looks at the computers every 15 minutes while the app is closed (the shortest Android allows),
+ *  so a login is announced even then, and the screen time on the phone stays fresh. A login made
+ *  while the phone was away or the computer was offline is announced at the next look.
+ *
+ *  The 15-minute job only starts the look as an expedited job: Android 15 and later keep the
+ *  network from an app in the background, and lift that for expedited jobs but not for ordinary
+ *  ones. Older Android runs an expedited job as a short foreground task, with a quiet notification. */
+class WatchWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result {
+        if (!inputData.getBoolean(LOOK, false)) {
+            WorkManager.getInstance(applicationContext).enqueueUniqueWork(
+                "$NAME-now", ExistingWorkPolicy.KEEP,
+                OneTimeWorkRequestBuilder<WatchWorker>().setInputData(workDataOf(LOOK to true))
+                    .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST).build(),
+            )
+            return Result.success()
+        }
+        (applicationContext as CurfewApp).repo.lookInBackground(if (Build.VERSION.SDK_INT >= 28) network else null)
+        return Result.success()
+    }
+
+    override suspend fun getForegroundInfo(): ForegroundInfo = Alerts.checking(applicationContext)
+
+    companion object {
+        private const val NAME = "curfew-watch"
+        private const val LOOK = "look"
+
+        fun sync(context: Context, any: Boolean) {
+            val wm = WorkManager.getInstance(context)
+            if (!any) {
+                wm.cancelUniqueWork(NAME)
+                return
+            }
+            val request = PeriodicWorkRequestBuilder<WatchWorker>(15, TimeUnit.MINUTES)
+                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                .build()
+            wm.enqueueUniquePeriodicWork(NAME, ExistingPeriodicWorkPolicy.KEEP, request)
+        }
+
+        /** The same in 30 seconds, for trying it out. */
+        fun soon(context: Context) {
+            WorkManager.getInstance(context).enqueue(OneTimeWorkRequestBuilder<WatchWorker>().setInitialDelay(30, TimeUnit.SECONDS).build())
         }
     }
 }

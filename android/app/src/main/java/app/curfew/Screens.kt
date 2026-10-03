@@ -1,6 +1,12 @@
 package app.curfew
 
+import android.Manifest
+import android.content.Intent
+import android.os.Build
 import android.os.SystemClock
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import android.text.format.DateFormat
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -27,6 +33,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Apps
+import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.ExpandLess
@@ -94,6 +101,7 @@ import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.time.LocalDate
 import java.time.ZoneId
 import kotlin.math.roundToInt
 
@@ -128,16 +136,43 @@ fun HomeScreen(repo: Repo, snack: SnackbarHostState, onOpen: (String) -> Unit, o
     val live by repo.live.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val unguarded = remember { guardOf(context) == Guard.NONE }
-    Every(4000) { repo.refreshAll() }
+    val memory by repo.memory.collectAsStateWithLifecycle()
+    var alerts by remember { mutableStateOf(Alerts.allowed(context)) }
+    var asked by rememberSaveable { mutableStateOf(false) }
+    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { alerts = it; asked = true }
+    Every(4000) {
+        alerts = Alerts.allowed(context)
+        repo.refreshAll()
+    }
+    fun turnOnAlerts() {
+        if (Build.VERSION.SDK_INT >= 33 && !asked) ask.launch(Manifest.permission.POST_NOTIFICATIONS)
+        else {          // asked before, or an older Android: only the phone's settings can turn them on
+            AppLock.away = true
+            context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName))
+        }
+    }
     Page(
         "Curfew", snack,
         bottomBar = { BottomAction { BigButton("Add computer", Icons.Rounded.Add, onAdd, Modifier.fillMaxWidth(), primary = true) } },
     ) {
         if (store.computers.isEmpty()) item { EmptyHome() }
-        if (unguarded) item { Note("This phone has no fingerprint or screen lock set up, so anyone holding it can open Curfew. Add a fingerprint in the phone’s settings.") }
+        if (BuildConfig.NO_LOCK) item { Note("Test version: the fingerprint lock is off. Do not give this version to anyone.") }
+        if (unguarded && !BuildConfig.NO_LOCK) item { Note("This phone has no fingerprint or screen lock set up, so anyone holding it can open Curfew. Add a fingerprint in the phone’s settings.") }
+        if (!alerts && store.computers.isNotEmpty()) item {
+            Card {
+                Text("Get told when someone logs in", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.size(4.dp))
+                Text(
+                    "Curfew can tell you when someone logs in on a computer, even while the app is closed. Allow notifications for that.",
+                    style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.size(12.dp))
+                BigButton("Allow notifications", Icons.Rounded.Notifications, ::turnOnAlerts, Modifier.fillMaxWidth(), primary = true)
+            }
+        }
         items(store.computers, key = { it.id }) { c ->
             val twin = store.computers.count { it.title == c.title } > 1
-            ComputerCard(c, live[c.id] ?: Live(), if (twin) c.id.takeLast(4) else null) { onOpen(c.id) }
+            ComputerCard(c, live[c.id] ?: Live(), if (twin) c.id.takeLast(4) else null, memory[c.id]?.statusAt ?: 0) { onOpen(c.id) }
         }
     }
 }
@@ -162,7 +197,7 @@ private fun EmptyHome() {
 }
 
 @Composable
-private fun ComputerCard(c: Computer, live: Live, tag: String?, onClick: () -> Unit) {
+private fun ComputerCard(c: Computer, live: Live, tag: String?, seenAt: Long, onClick: () -> Unit) {
     val remaining = secondsLeft(live.timerEndsAt.takeIf { live.link == Link.ON })
     Surface(onClick = onClick, shape = MaterialTheme.shapes.large, color = LocalExtra.current.card, modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(start = 12.dp, top = 16.dp, end = 12.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -177,6 +212,13 @@ private fun ComputerCard(c: Computer, live: Live, tag: String?, onClick: () -> U
                     boldNames(cardLine(live.link, live.status) { bold(c.userTitle(it)) }), style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3, overflow = TextOverflow.Ellipsis,
                 )
+                if (seenAt > 0 && live.link != Link.ON && live.link != Link.CHECKING) {
+                    val (zone, h24) = clock()
+                    Text(
+                        "Last seen " + formatSince(seenAt / 1000, System.currentTimeMillis() / 1000, zone, h24),
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+                    )
+                }
                 if (remaining != null) {
                     Spacer(Modifier.size(6.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -214,6 +256,9 @@ fun ComputerScreen(repo: Repo, snack: SnackbarHostState, id: String, onBack: () 
     var warn by rememberSaveable { mutableStateOf(false) }
     val confirmOwner = LocalConfirmOwner.current
     val remaining = secondsLeft(live.timerEndsAt.takeIf { live.link == Link.ON })
+    val memory by repo.memory.collectAsStateWithLifecycle()
+    val saved = memory[id]
+    val (zone, h24) = clock()
     Every(4000, id) { repo.refresh(id) }
 
     fun run(op: String, done: String, args: Map<String, Any> = emptyMap()) {
@@ -250,7 +295,19 @@ fun ComputerScreen(repo: Repo, snack: SnackbarHostState, id: String, onBack: () 
                     Spacer(Modifier.size(12.dp))
                     Text(why, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+                if (saved != null && saved.statusAt > 0 && live.link != Link.ON && live.link != Link.CHECKING) {
+                    Spacer(Modifier.size(8.dp))
+                    Text(
+                        "Last seen " + formatSince(saved.statusAt / 1000, System.currentTimeMillis() / 1000, zone, h24),
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
+        }
+        // While it cannot be reached, the screen time saved on this phone can still be looked at.
+        if (live.link != Link.ON && saved?.usage != null) item {
+            val at = formatSince(saved.usageAt / 1000, System.currentTimeMillis() / 1000, zone, h24)
+            ScreenTimeLink("Saved on this phone " + (if (',' in at) "on " else "at ") + at, onUsage)
         }
         if (live.link == Link.ON) {
             item {
@@ -282,25 +339,7 @@ fun ComputerScreen(repo: Repo, snack: SnackbarHostState, id: String, onBack: () 
                 }
             }
             if (live.status?.caps?.contains("usage") == true) item {
-                Card(padding = 8.dp) {
-                    Row(
-                        Modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium).clickable(onClick = onUsage).padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Box(Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.secondaryContainer), contentAlignment = Alignment.Center) {
-                            Icon(Icons.Rounded.Schedule, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
-                        }
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text("Screen time", style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                "How long each account was used today and yesterday, and when it logged in",
-                                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Icon(Icons.Rounded.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
-                    }
-                }
+                ScreenTimeLink("How long each account was used today and yesterday, and when it logged in", onUsage)
             }
         }
         item {
@@ -338,6 +377,26 @@ fun ComputerScreen(repo: Repo, snack: SnackbarHostState, id: String, onBack: () 
             onSave = { ask = null; repo.rename(id, it) }, onDismiss = { ask = null },
         )
         else -> {}
+    }
+}
+
+@Composable
+private fun ScreenTimeLink(text: String, onClick: () -> Unit) {
+    Card(padding = 8.dp) {
+        Row(
+            Modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium).clickable(onClick = onClick).padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.secondaryContainer), contentAlignment = Alignment.Center) {
+                Icon(Icons.Rounded.Schedule, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Screen time", style = MaterialTheme.typography.titleMedium)
+                Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Icon(Icons.Rounded.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
+        }
     }
 }
 
@@ -510,7 +569,8 @@ fun UserScreen(
     var apps by remember { mutableStateOf<List<AppInfo>?>(null) }
     var browsers by remember { mutableStateOf<List<BrowserInfo>?>(null) }
     var failed by remember { mutableStateOf(false) }
-    var usage by remember { mutableStateOf<UserUsage?>(null) }
+    var usage by remember { mutableStateOf(repo.savedUsage(id)?.first?.users?.find { it.name == userName }) }
+    val usageAt = repo.memory.collectAsStateWithLifecycle().value[id]?.usageAt ?: 0
     val canBrowsers = live.status?.caps?.contains("browsers") == true
     Every(5000, id + userName) {
         repo.refresh(id)
@@ -590,9 +650,12 @@ fun UserScreen(
                 }
             }
         }
-        if (on && user != null && "usage" in caps) item {
+        if (user != null && "usage" in caps && (on || usage != null)) item {
             val (zone, h24) = clock()
-            val since = user.since?.takeIf { user.state != UserState.NONE }
+            val today = LocalDate.now(zone)
+            // from the computer now, or what this phone saved the last time it could ask
+            fun day(d: LocalDate) = usage?.days?.find { it.date == d.toString() }?.used?.toLong()
+            val since = user.since?.takeIf { on && user.state != UserState.NONE }
             Surface(onClick = onUsage, shape = MaterialTheme.shapes.large, color = LocalExtra.current.card, modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(20.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -603,10 +666,14 @@ fun UserScreen(
                         "Logged in since " + formatMoment(since, zone, h24),
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    if (!on && usageAt > 0) Text(
+                        "Last updated " + formatSince(usageAt / 1000, System.currentTimeMillis() / 1000, zone, h24),
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     Spacer(Modifier.size(14.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Stat("Today", (usage?.today?.used ?: user.todaySeconds ?: 0).toLong(), Modifier.weight(1f))
-                        Stat("Yesterday", usage?.yesterday?.used?.toLong(), Modifier.weight(1f))
+                        Stat("Today", day(today) ?: (if (on) user.todaySeconds?.toLong() else null) ?: 0L, Modifier.weight(1f))
+                        Stat("Yesterday", day(today.minusDays(1)) ?: if (usage != null) 0L else null, Modifier.weight(1f))
                     }
                 }
             }
@@ -866,15 +933,21 @@ fun UsageScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: Stri
         return
     }
     val live = liveMap[id] ?: Live()
-    var usage by remember { mutableStateOf<Usage?>(null) }
+    // starts with what this phone saved, so there is something to see while the computer is off
+    var usage by remember { mutableStateOf(repo.savedUsage(id)?.first) }
+    var fresh by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf(false) }
+    val usageAt = repo.memory.collectAsStateWithLifecycle().value[id]?.usageAt ?: 0
     Every(5000, id) {
         repo.refresh(id)
         val got = repo.usage(id)
         if (got != null) usage = got
+        fresh = got != null
         failed = got == null
     }
     val (zone, h24) = clock()
+    val today = LocalDate.now(zone)
+    val stale = !fresh && live.link != Link.ON && live.link != Link.CHECKING
     val u = usage
     val shown = u?.users.orEmpty().filter { userName == null || it.name == userName }
     // every bar on the page is drawn to the same scale: the longest day shown, and at least one hour
@@ -883,18 +956,25 @@ fun UsageScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: Stri
 
     Page("Screen time", snack, onBack) {
         when {
-            live.link != Link.ON -> item { Note("The computer cannot be reached, so there is nothing to show.") }
+            u == null && live.link != Link.ON && live.link != Link.CHECKING ->
+                item { Note("The computer cannot be reached, and this phone has not saved its screen time yet. It is saved each time the computer can be reached.") }
             u == null && failed -> item { Note("Could not get the screen time. Trying again…") }
             u == null -> item { LookingCard() }
             else -> {
-                if (u.boot > 0) item {
+                if (stale) item {
+                    Note(
+                        "${c.title} cannot be reached right now. This is the screen time saved on " +
+                            formatMoment(usageAt / 1000, zone, h24) + ". It updates by itself when the computer is back.",
+                    )
+                }
+                if (u.boot > 0 && !stale) item {
                     Card {
                         Text(c.title, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text("On since " + formatMoment(u.boot, zone, h24), style = MaterialTheme.typography.titleMedium.merge(Tabular))
                     }
                 }
                 if (shown.isEmpty()) item { Note("This account no longer exists.") }
-                items(shown, key = { it.name }) { UsageCard(nameOf(it.name), it, u.now, longest, zone, h24, open = userName != null) }
+                items(shown, key = { it.name }) { UsageCard(nameOf(it.name), it, u.now, longest, zone, h24, open = userName != null, today, stale) }
                 item {
                     Text(
                         "Time counts while the account is on the screen and unlocked. A locked screen, or an account left logged in " +
@@ -908,7 +988,9 @@ fun UsageScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: Stri
 }
 
 @Composable
-private fun UsageCard(name: String, u: UserUsage, now: Long, longest: Int, zone: ZoneId, h24: Boolean, open: Boolean) {
+private fun UsageCard(
+    name: String, u: UserUsage, now: Long, longest: Int, zone: ZoneId, h24: Boolean, open: Boolean, today: LocalDate, stale: Boolean,
+) {
     val scheme = MaterialTheme.colorScheme
     var logins by rememberSaveable(u.name) { mutableStateOf(open) }
     Card {
@@ -920,14 +1002,14 @@ private fun UsageCard(name: String, u: UserUsage, now: Long, longest: Int, zone:
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(9.dp).clip(CircleShape).background(stateColor(u.state)))
                     Spacer(Modifier.width(8.dp))
-                    Text(u.state.label, style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
+                    Text((if (stale) "When last seen: " else "") + u.state.label, style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
                 }
             }
         }
         val since = u.since
         if (since != null) {
             Spacer(Modifier.size(12.dp))
-            Text("Logged in since", style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
+            Text(if (stale) "Was logged in since" else "Logged in since", style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
             Text(formatMoment(since, zone, h24), style = MaterialTheme.typography.titleMedium.merge(Tabular))
         }
         if (u.empty) {
@@ -935,13 +1017,15 @@ private fun UsageCard(name: String, u: UserUsage, now: Long, longest: Int, zone:
             Text("Not used today or yesterday.", style = MaterialTheme.typography.bodyLarge, color = scheme.onSurfaceVariant)
         } else {
             Spacer(Modifier.size(16.dp))
-            u.today?.let { UseBar("Today", it, longest, LocalExtra.current.on) }
+            u.today?.let { UseBar(dayLabel(it.date, today), it, longest, LocalExtra.current.on) }
             Spacer(Modifier.size(14.dp))
-            u.yesterday?.let { UseBar("Yesterday", it, longest, scheme.primary) }
-            Spacer(Modifier.size(14.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Since the computer was turned on", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
-                Text(formatDuration(u.bootUsed.toLong()), style = MaterialTheme.typography.titleSmall.merge(Tabular))
+            u.yesterday?.let { UseBar(dayLabel(it.date, today), it, longest, scheme.primary) }
+            if (!stale) {
+                Spacer(Modifier.size(14.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Since the computer was turned on", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
+                    Text(formatDuration(u.bootUsed.toLong()), style = MaterialTheme.typography.titleSmall.merge(Tabular))
+                }
             }
             if (u.logins.isNotEmpty()) {
                 Spacer(Modifier.size(8.dp))
@@ -956,7 +1040,7 @@ private fun UsageCard(name: String, u: UserUsage, now: Long, longest: Int, zone:
                     )
                     Icon(if (logins) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, if (logins) "Hide" else "Show", tint = scheme.onSurfaceVariant)
                 }
-                if (logins) u.logins.forEach { LoginRow(it, now, zone, h24) }
+                if (logins) u.logins.forEach { LoginRow(it, now, zone, h24, stale) }
             }
         }
     }
@@ -968,7 +1052,8 @@ private fun UseBar(label: String, day: DayUse, longest: Int, color: Color) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(label, style = MaterialTheme.typography.titleSmall)
-            Text(formatDay(day.date), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (label != formatDay(day.date))
+                Text(formatDay(day.date), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Text(formatDuration(day.used.toLong()), style = MaterialTheme.typography.titleMedium.merge(Tabular))
     }
@@ -980,7 +1065,7 @@ private fun UseBar(label: String, day: DayUse, longest: Int, color: Color) {
 }
 
 @Composable
-private fun LoginRow(l: LoginSpan, now: Long, zone: ZoneId, h24: Boolean) {
+private fun LoginRow(l: LoginSpan, now: Long, zone: ZoneId, h24: Boolean, stale: Boolean) {
     val scheme = MaterialTheme.colorScheme
     val length = formatDuration((l.end ?: now) - l.start)
     Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.Top) {
@@ -989,7 +1074,8 @@ private fun LoginRow(l: LoginSpan, now: Long, zone: ZoneId, h24: Boolean) {
         Column(Modifier.weight(1f)) {
             Text(formatMoment(l.start, zone, h24), style = MaterialTheme.typography.bodyLarge.merge(Tabular))
             Text(
-                if (l.end == null) "Still logged in · $length so far" else "Logged out " + formatSince(l.end, l.start, zone, h24) + " · $length",
+                if (l.end == null && stale) "Was still logged in at ${formatClock(now, zone, h24)} · $length by then"
+                else if (l.end == null) "Still logged in · $length so far" else "Logged out " + formatSince(l.end, l.start, zone, h24) + " · $length",
                 style = MaterialTheme.typography.bodyMedium.merge(Tabular), color = scheme.onSurfaceVariant,
             )
         }

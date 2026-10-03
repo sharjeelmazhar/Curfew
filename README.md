@@ -77,7 +77,7 @@ The code works once, for one phone, and expires after two minutes, so a photo of
 
 ## Using the app
 
-- **Home screen:** one card per laptop. A glowing green power light means it is on; a dim one means off or out of reach. The line below says who is using it. If a countdown is running you see it here.
+- **Home screen:** one card per laptop. A glowing green power light means it is on; a dim one means off or out of reach. The line below says who is using it. For a laptop that is off it says when the phone last saw it. If a countdown is running you see it here.
 - **Tap a laptop:** Shut down, Restart, the shut-down timer, and the list of accounts on that laptop with what each is doing (not logged in, logged in in the background, in use right now, screen locked). After "Switch user", both accounts are logged in and both are shown: the one on the screen has a green dot, the one left in the background an orange dot. Under each name you see since when it is logged in and how long it was used today. **Screen time** at the bottom opens the times for every account.
 - **Tap an account:** Log in without the password, Lock screen, Log out, a shut-down timer for the computer, the internet for that account, and what that person has open at the moment.
 - **The pencil** at the top of a laptop or an account gives it a name of your own ("Fatima's computer", "Gaming"). The name exists only in the app; nothing changes on the laptop.
@@ -113,6 +113,14 @@ The list travels over the home Wi-Fi signed but **not encrypted**, the same as e
 On a laptop's page, **Screen time** shows every account: how long it was used today, how long yesterday, how long since the laptop was turned on, and each login with its date and time ("2 Oct 2026, 8:55 PM") and when it logged out. The same box is on each account's own page. Logging out and back in adds to the same day's total; the day starts again at midnight, and only today and yesterday are kept.
 
 Time counts while the account is on the screen and unlocked. A locked screen does not count, and neither does an account that was left logged in while someone else used the laptop after "Switch user". The laptop only counts while Curfew is installed, so the first day starts from the moment you install this version.
+
+The phone keeps a copy of the last screen time it saw. When a laptop is shut down or away from home, its page still has **Screen time**, showing that copy and when it was saved ("Last seen 8:55 PM"). As soon as the laptop is back, the numbers are up to date again: the laptop keeps counting even when it has no internet, and the phone picks it all up next time.
+
+### Told when someone logs in
+
+The phone tells you when someone logs in on a laptop, with a notification such as "Ali logged in · On kids-laptop at 8:55 PM". This includes admin accounts. A login you allowed from the phone with **Log in without the password** is not announced. The first time you open this version, tap **Allow notifications** on the home screen.
+
+While the app is open, you are told within seconds. While it is closed, the phone looks every 15 minutes (the most often Android allows), so a notification can come up to 15 minutes late. It shows the time of the login, not the time you were told. If your phone was away from home, or the laptop had no Wi-Fi, you are told about the login when both are home again. On Xiaomi/Redmi phones, also turn on **Autostart** for Curfew in the phone's settings, or the phone may not let it look while closed.
 
 ### Internet for one account
 

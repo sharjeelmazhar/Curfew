@@ -42,7 +42,7 @@ import androidx.fragment.app.FragmentActivity
 /** The app opens only for the owner of the phone: it locks whenever it leaves the screen and
  *  asks for a fingerprint when it comes back. */
 object AppLock {
-    var locked by mutableStateOf(true)
+    var locked by mutableStateOf(!BuildConfig.NO_LOCK)
     /** Counts the times the app came to the front, so the lock screen asks once each time. */
     var visit by mutableIntStateOf(0)
     /** Set just before the app opens another screen itself (the code scanner, the phone's own
@@ -52,11 +52,11 @@ object AppLock {
 
     fun onStop() {
         stoppedAt = SystemClock.elapsedRealtime()
-        if (!away) locked = true
+        if (!away && !BuildConfig.NO_LOCK) locked = true
     }
 
     fun onStart(guard: Guard) {
-        if (away && SystemClock.elapsedRealtime() - stoppedAt > 60_000) locked = true
+        if (away && SystemClock.elapsedRealtime() - stoppedAt > 60_000 && !BuildConfig.NO_LOCK) locked = true
         if (guard == Guard.NONE) locked = false
         away = false
         visit++
@@ -77,7 +77,7 @@ fun guardOf(context: Context): Guard = when {
  *  back to its screen lock, and a phone with neither cannot ask anything. */
 fun FragmentActivity.confirmOwner(title: String, subtitle: String?, onResult: (Boolean) -> Unit) {
     val guard = guardOf(this)
-    if (guard == Guard.NONE) return onResult(true)
+    if (guard == Guard.NONE || BuildConfig.NO_LOCK) return onResult(true)
     if (supportFragmentManager.isStateSaved) return onResult(false)     // not on screen: the prompt could not show
     val info = BiometricPrompt.PromptInfo.Builder().setTitle(title).setSubtitle(subtitle).setConfirmationRequired(false).apply {
         if (guard == Guard.FINGERPRINT) setAllowedAuthenticators(BIOMETRIC_STRONG).setNegativeButtonText("Cancel")
