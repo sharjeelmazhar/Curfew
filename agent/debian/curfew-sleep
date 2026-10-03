@@ -1,0 +1,10 @@
+#!/bin/sh
+# Installed by Curfew as /usr/lib/systemd/system-sleep/curfew. Tells the agent that the computer
+# is about to sleep, so the phones that watch it show it as asleep at once, and that it woke up.
+pid="$(systemctl show -p MainPID --value curfew.service 2>/dev/null)"
+[ -n "$pid" ] && [ "$pid" != 0 ] || exit 0
+case "$1" in
+  pre)  kill -USR1 "$pid" 2>/dev/null && sleep 0.5 ;;
+  post) kill -USR2 "$pid" 2>/dev/null ;;
+esac
+exit 0

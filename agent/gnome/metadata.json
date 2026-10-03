@@ -1,0 +1,7 @@
+{
+  "uuid": "curfew@sharjeelmazhar.github.io",
+  "name": "Curfew",
+  "description": "Takes airplane mode out of the quick settings of a child's account, so the Wi-Fi stays on and the parent's phone can reach this computer. Installed by Curfew for standard accounts only.",
+  "url": "https://github.com/sharjeelmazhar/Curfew",
+  "shell-version": ["45", "46", "47", "48", "49", "50", "51", "52"]
+}

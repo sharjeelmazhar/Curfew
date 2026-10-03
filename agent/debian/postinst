@@ -98,6 +98,35 @@ PKLA
   chmod 644 /etc/polkit-1/localauthority/50-local.d/curfew-network.pkla
 fi
 
+# Airplane mode cuts the Wi-Fi, and the phone with it. In a standard (child) account Curfew's GNOME
+# Shell add-on takes its button out of the quick settings, and the dconf profile below keeps that
+# add-on on: a child cannot turn it off or add other add-ons. Administrators are not touched (see
+# /usr/lib/systemd/user-environment-generators/90-curfew). It takes effect at the next login.
+# GNOME 45 and later only; airplane mode switched on any other way is still undone at once.
+GSV="$(gnome-shell --version 2>/dev/null | sed -n 's/^GNOME Shell \([0-9]*\).*/\1/p')"
+if [ -n "$GSV" ] && [ "$GSV" -ge 45 ] && [ -d /etc/dconf ] && command -v dconf >/dev/null; then
+  install -d -m 755 /etc/dconf/db/curfew.d/locks /etc/dconf/profile
+  cat > /etc/dconf/db/curfew.d/00-curfew <<'DCONF'
+# Installed by Curfew for standard (child) accounts.
+[org/gnome/shell]
+enabled-extensions=['curfew@sharjeelmazhar.github.io']
+disabled-extensions=@as []
+disable-user-extensions=false
+allow-extension-installation=false
+DCONF
+  cat > /etc/dconf/db/curfew.d/locks/00-curfew <<'LOCKS'
+/org/gnome/shell/enabled-extensions
+/org/gnome/shell/disabled-extensions
+/org/gnome/shell/disable-user-extensions
+/org/gnome/shell/allow-extension-installation
+LOCKS
+  # the usual profile (if this computer has one), with Curfew's settings after it
+  { if [ -f /etc/dconf/profile/user ]; then grep -v '^system-db:curfew$' /etc/dconf/profile/user; else echo user-db:user; fi
+    echo system-db:curfew; } > /etc/dconf/profile/curfew
+  chmod 644 /etc/dconf/db/curfew.d/00-curfew /etc/dconf/db/curfew.d/locks/00-curfew /etc/dconf/profile/curfew
+  dconf update || echo "Curfew: could not update the desktop settings (dconf update); airplane mode stays in the menu."
+fi
+
 if [ -d /run/systemd/system ]; then
   systemctl daemon-reload
   systemctl enable curfew.service >/dev/null 2>&1 || true

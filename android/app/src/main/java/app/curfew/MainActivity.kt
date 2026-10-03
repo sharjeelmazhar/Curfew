@@ -1,5 +1,6 @@
 package app.curfew
 
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.compose.setContent
@@ -13,20 +14,39 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 
+/** A screen to open once the app is unlocked (a tapped notification asks for its list). */
+object Pending {
+    var route by mutableStateOf<String?>(null)
+}
+
 class MainActivity : FragmentActivity() {
     private val repo get() = (application as CurfewApp).repo
     private var asking = false
 
+    private fun take(intent: Intent?) {
+        if (intent?.getStringExtra(Alerts.OPEN) == "alerts") Pending.route = "alerts"
+        intent?.removeExtra(Alerts.OPEN)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        take(intent)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null) take(intent)
         setContent {
             CurfewTheme {
                 if (AppLock.locked) LockScreen(::unlock)
@@ -65,6 +85,12 @@ fun CurfewNav(repo: Repo) {
     val nav = rememberNavController()
     val snack = remember { SnackbarHostState() }
     LaunchedEffect(Unit) { repo.notices.collect { say(snack, it, long = true) } }
+    LaunchedEffect(Pending.route) {
+        val to = Pending.route ?: return@LaunchedEffect
+        Pending.route = null
+        nav.popBackStack("home", inclusive = false)
+        nav.navigate(to)
+    }
 
     // Only the screen in front may navigate, so a double tap cannot open two screens.
     fun inFront() = nav.currentBackStackEntry?.lifecycle?.currentState == Lifecycle.State.RESUMED
@@ -80,7 +106,10 @@ fun CurfewNav(repo: Repo) {
         popExitTransition = { fadeOut(tween(150)) + slideOutHorizontally(tween(220)) { it / 10 } },
     ) {
         composable("home") {
-            HomeScreen(repo, snack, onOpen = { go("computer/$it") }, onAdd = { go("add") })
+            HomeScreen(repo, snack, onOpen = { go("computer/$it") }, onAdd = { go("add") }, onAlerts = { go("alerts") })
+        }
+        composable("alerts") {
+            AlertsScreen(repo, snack, onBack = ::back, onOpen = { id, user -> go(if (user == null) "computer/$id" else "user/$id/${Uri.encode(user)}") })
         }
         composable("add") {
             AddScreen(repo, snack, onBack = ::back, onDone = ::home)
@@ -94,7 +123,11 @@ fun CurfewNav(repo: Repo) {
             val id = entry.arguments?.getString("id").orEmpty()
             val user = entry.arguments?.getString("user").orEmpty()
             UserScreen(repo, snack, id, user, onBack = ::back, onGone = ::home,
-                onBrowser = { go("browser/$id/${Uri.encode(user)}/$it") }, onUsage = { go("usage/$id/${Uri.encode(user)}") })
+                onBrowser = { go("browser/$id/${Uri.encode(user)}/$it") }, onUsage = { go("usage/$id/${Uri.encode(user)}") },
+                onLimit = { go("limit/$id/${Uri.encode(user)}") })
+        }
+        composable("limit/{id}/{user}") { entry ->
+            LimitScreen(repo, snack, entry.arguments?.getString("id").orEmpty(), entry.arguments?.getString("user").orEmpty(), onBack = ::back, onGone = ::home)
         }
         composable("usage/{id}") { entry ->                 // every account on that computer
             UsageScreen(repo, snack, entry.arguments?.getString("id").orEmpty(), null, onBack = ::back, onGone = ::home)

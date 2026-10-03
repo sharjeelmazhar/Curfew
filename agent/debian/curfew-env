@@ -1,0 +1,10 @@
+#!/bin/sh
+# Installed by Curfew as a systemd user environment generator. In a standard (child) account the
+# desktop reads its settings through the "curfew" dconf profile (made by Curfew's postinst), which
+# turns on Curfew's GNOME Shell add-on and keeps it on. Administrators are left as they are.
+[ -f /etc/dconf/db/curfew ] && [ -f /etc/dconf/profile/curfew ] || exit 0
+[ "$(id -u)" -ge 1000 ] || exit 0
+for g in $(id -Gn 2>/dev/null); do
+  case "$g" in sudo|admin) exit 0 ;; esac
+done
+echo DCONF_PROFILE=curfew
