@@ -713,15 +713,15 @@ def event_add(kind, **fields):
         d["seq"] += 1
         d["list"] = [e for e in d["list"] if e.get("time", 0) > now - EVENTS_SECONDS][-(EVENTS_KEPT - 1):]
         d["list"].append(dict(fields, seq=d["seq"], time=int(now), type=kind))
-        text = json.dumps(d)
         EV["cond"].notify_all()
-    with contextlib.suppress(OSError):
-        os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
-        path = os.path.join(STATE_DIR, "events.json")
-        fd = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            f.write(text)
-        os.replace(path + ".tmp", path)
+        # written under the lock, so a slower writer can never put back an older list
+        with contextlib.suppress(OSError):
+            os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
+            path = os.path.join(STATE_DIR, "events.json")
+            fd = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f:
+                f.write(json.dumps(d))
+            os.replace(path + ".tmp", path)
     log("event: %s %s" % (kind, " ".join("%s=%s" % kv for kv in sorted(fields.items()))))
 
 
@@ -959,9 +959,8 @@ def usage_loop():
 
 def power(kind):
     if kind == "reboot":
-        act("restart the computer", ["systemctl", "reboot", "-i"])
-    else:
-        act("power off", ["systemctl", "poweroff", "-i"])
+        return act("restart the computer", ["systemctl", "reboot", "-i"])
+    return act("power off", ["systemctl", "poweroff", "-i"])
 
 
 def human(seconds):
@@ -1338,13 +1337,17 @@ def limits_check(seen, users, now):
         elif not run["done"]:
             fast = True
             if time.monotonic() - run["up"] >= LIMIT_GRACE:
-                run["done"] = True
                 # Shutting down would also end whoever else is on the screen now; log out only this account then.
                 if limit["action"] == "poweroff" and not any(o["state"] == "active" and o["name"] != name for o in users):
                     log("the screen time of %s is used up" % name)
-                    power("poweroff")
+                    ok = power("poweroff")
                 else:
-                    act("log out %s: screen time used up" % name, ["loginctl", "terminate-user", name])
+                    ok = act("log out %s: screen time used up" % name, ["loginctl", "terminate-user", name])
+                if ok:
+                    run["done"] = True
+                else:                   # try again after another grace
+                    log("could not end the session of %s; trying again" % name)
+                    run["up"] = time.monotonic()
     return fast
 
 
@@ -1943,7 +1946,28 @@ class Server(ThreadingHTTPServer):
                     self.busy.pop(client_address[0], None)
 
 
+def sleep_loop():
+    """Tells the phones the moment the computer is about to sleep, when logind announces it:
+    NetworkManager takes the Wi-Fi down for sleep at the same signal, before the system-sleep
+    hook (debian/curfew-sleep) runs."""
+    while True:
+        try:
+            p = subprocess.Popen(["gdbus", "monitor", "--system", "--dest", "org.freedesktop.login1",
+                                  "--object-path", "/org/freedesktop/login1"],
+                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, errors="replace")
+            for line in p.stdout:
+                if "PrepareForSleep" in line:
+                    say_bye("sleep" if "(true" in line else None)
+            p.wait()
+        except Exception as e:
+            log("following logind failed: %r" % e)
+        time.sleep(10)
+
+
 def serve():
+    # first of all: the default for these signals is to end the program
+    signal.signal(signal.SIGUSR1, lambda *_: (say_bye("sleep"), time.sleep(0.3)))
+    signal.signal(signal.SIGUSR2, lambda *_: say_bye(None))
     srv = Server(("0.0.0.0", PORT), Handler)
     with state() as st:
         log("Curfew agent %s listening on port %d" % (st["id"], PORT))
@@ -1953,6 +1977,8 @@ def serve():
         threading.Thread(target=radio_loop, daemon=True).start()
         if shutil.which("journalctl"):
             threading.Thread(target=nm_loop, daemon=True).start()
+        if shutil.which("gdbus"):
+            threading.Thread(target=sleep_loop, daemon=True).start()
     else:
         threading.Thread(target=fake_event_loop, daemon=True).start()
 
@@ -1961,9 +1987,6 @@ def serve():
         time.sleep(0.5)                 # for those answers to go out
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, stop)     # so that the screen-time totals are written before it ends
-    # debian/curfew-sleep: the computer is about to sleep (USR1), or woke up (USR2)
-    signal.signal(signal.SIGUSR1, lambda *_: (say_bye("sleep"), time.sleep(0.3)))
-    signal.signal(signal.SIGUSR2, lambda *_: say_bye(None))
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

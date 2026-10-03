@@ -121,8 +121,10 @@ DCONF
 /org/gnome/shell/allow-extension-installation
 LOCKS
   # the usual profile (if this computer has one), with Curfew's settings after it
-  { if [ -f /etc/dconf/profile/user ]; then grep -v '^system-db:curfew$' /etc/dconf/profile/user; else echo user-db:user; fi
-    echo system-db:curfew; } > /etc/dconf/profile/curfew
+  base=""
+  [ -f /etc/dconf/profile/user ] && base="$(grep -v '^system-db:curfew$' /etc/dconf/profile/user || true)"
+  printf '%s\n' "$base" | grep -q '^user-db:' || base="$(printf 'user-db:user\n%s' "$base")"
+  printf '%s\nsystem-db:curfew\n' "$base" | sed '/^[[:space:]]*$/d' > /etc/dconf/profile/curfew
   chmod 644 /etc/dconf/db/curfew.d/00-curfew /etc/dconf/db/curfew.d/locks/00-curfew /etc/dconf/profile/curfew
   dconf update || echo "Curfew: could not update the desktop settings (dconf update); airplane mode stays in the menu."
 fi

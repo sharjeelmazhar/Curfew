@@ -594,6 +594,15 @@ class CurfewTest {
         assertNull(s.withoutShared(c).sharedOf(b))                            // a limit of one is no longer shared
         assertNull(s.withShared(c, emptySet(), 60, "poweroff", true, true, "g3").sharedOf(b))
         assertTrue(s.withRemoved("pc2", 0).shared.isEmpty())                  // a removed computer leaves its limits
+        // who left a shared limit is remembered until its computer stops counting the others' time
+        assertEquals(setOf(a), s.released)
+        val joined = s.withShared(a, setOf(c), 60, "poweroff", true, true, "g4")
+        assertEquals(setOf(b), joined.released)                               // a is in a shared limit again; b was left alone
+        assertEquals(setOf(b), joined.withoutReleased(a).released)
+        assertEquals(setOf(c), s.withPending(setOf(c, a)).pending)             // only accounts in a shared limit wait for it
+        assertEquals(emptySet<Account>(), s.withPending(setOf(c)).withoutPending(c).pending)
+        assertEquals(s.withPending(setOf(c)), StoreData.fromJson(s.withPending(setOf(c)).toJson()))
+        assertEquals(emptySet<Account>(), s.withPending(setOf(b)).withRemoved("pc2", 0).pending)
         val p = s.copy(prefs = AlertPrefs(logins = false, tamper = true, limits = false))
         assertEquals(p.prefs, StoreData.fromJson(p.toJson()).prefs)
         assertEquals(AlertPrefs(), StoreData.fromJson("""{"computers":[]}""").prefs)    // an older phone's store

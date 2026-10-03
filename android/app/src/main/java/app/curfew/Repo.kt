@@ -39,6 +39,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
@@ -211,9 +212,9 @@ class Discovery(context: Context) {
 }
 
 /** How long a "watch" call is held open by the computer, and how often an older Curfew is asked instead. */
-const val WATCH_WAIT_S = 50
+const val WATCH_WAIT_S = 60
 const val POLL_OLD_MS = 30_000L
-const val USAGE_SAVE_MS = 2 * 60_000L
+const val USAGE_SAVE_MS = 5 * 60_000L
 const val RETRY_MAX_MS = 2 * 60_000L
 
 class Repo(private val app: Context) {
@@ -573,13 +574,30 @@ class Repo(private val app: Context) {
 
     private suspend fun nap(ms: Long) {
         val me = Any()
-        naps[me] = SystemClock.elapsedRealtime() + ms
-        napping.value = naps.values.minOrNull() ?: 0L
+        synchronized(naps) {
+            naps[me] = SystemClock.elapsedRealtime() + ms
+            napping.value = naps.values.minOrNull() ?: 0L
+        }
         try {
             withTimeoutOrNull(ms) { nudges.first() }
         } finally {
-            naps.remove(me)
-            napping.value = naps.values.minOrNull() ?: 0L
+            synchronized(naps) {
+                naps.remove(me)
+                napping.value = naps.values.minOrNull() ?: 0L
+            }
+        }
+    }
+
+    private val looking = java.util.concurrent.atomic.AtomicInteger()
+
+    /** Looks around the Wi-Fi for a while, for computers that moved to another address. */
+    private fun lookAround() = scope.launch {
+        looking.incrementAndGet()
+        discovery.start()
+        try {
+            withTimeoutOrNull(20_000) { discovery.found.drop(1).collect { nudge() } }     // found: try it at once
+        } finally {
+            if (looking.decrementAndGet() == 0 && !foreground) discovery.stop()
         }
     }
 
@@ -627,8 +645,12 @@ class Repo(private val app: Context) {
                 heard == Heard.BYE -> { misses = 4; nap(RETRY_MAX_MS) }
                 heard == Heard.ANSWER && nowCan -> misses = 0          // and at once the next one
                 heard == Heard.ANSWER -> { misses = 0; nap(POLL_OLD_MS) }
-                // cannot be reached: again after 5, 10, 20, 40 seconds, then every 2 minutes
-                else -> nap(minOf(5_000L shl minOf(misses++, 5), RETRY_MAX_MS))
+                // cannot be reached: again after 5, 10, 20, 40 seconds, then every 2 minutes;
+                // now and then look whether it moved to another address
+                else -> {
+                    if (misses % 4 == 3 && !foreground) lookAround()
+                    nap(minOf(5_000L shl minOf(misses++, 5), RETRY_MAX_MS))
+                }
             }
         }
     }
@@ -641,7 +663,7 @@ class Repo(private val app: Context) {
         if (m != null && m.epoch.isNotEmpty()) payload.put("epoch", m.epoch)
         val (reply, ep) = reach(c, payload, WATCH_WAIT_S * 1000)
         val j = absorb(c, reply, ep) ?: return@withContext Heard.NOTHING
-        wake.acquire(10_000)            // the answer woke the phone; stay awake to handle it and ask again
+        wake.acquire(3_000)             // the answer woke the phone; stay awake to handle it and ask again (well under a second)
         val w = parseWatch(j)
         w.status?.let { gotStatus(c, it) }
         handle(c, w)
@@ -667,7 +689,8 @@ class Repo(private val app: Context) {
         save { it.withShared(account, others, minutes, action, warn, tell, UUID.randomUUID().toString()) }
         val args = { a: Account -> mapOf("user" to a.user, "minutes" to minutes, "action" to action, "warn" to warn, "tell" to tell) }
         val error = command(account.computerId, "limit_set", args(account))
-        for (o in others) command(o.computerId, "limit_set", args(o))
+        val missed = others.filter { command(it.computerId, "limit_set", args(it)) != null }.toSet()
+        save { it.withPending(missed + listOfNotNull(account.takeIf { error != null })) }     // given when they are back
         scope.launch { syncShared() }
         return error
     }
@@ -712,13 +735,15 @@ class Repo(private val app: Context) {
                     val acc = Account(id, u.name)
                     val g = s.sharedOf(acc)
                     val lim = u.limit
-                    if (g == null) {            // no longer shared: the others' time no longer counts
+                    if (g == null) {            // taken out of a shared limit here: the others' time no longer counts
+                        if (acc !in s.released) continue
                         if (lim != null && lim.elsewhere > 0) spent.getOrPut(id) { HashMap() }[u.name] = 0
+                        else save { it.withoutReleased(acc) }
                         continue
                     }
-                    if ((lim == null || lim.minutes != g.minutes || lim.action != g.action || lim.warn != g.warn || lim.tell != g.tell)
-                        && due("set/$id/${u.name}", 30_000)) {
-                        command(id, "limit_set", mapOf("user" to u.name, "minutes" to g.minutes, "action" to g.action, "warn" to g.warn, "tell" to g.tell))
+                    if (acc in s.pending && due("set/$id/${u.name}", 30_000) && command(id, "limit_set",
+                            mapOf("user" to u.name, "minutes" to g.minutes, "action" to g.action, "warn" to g.warn, "tell" to g.tell)) == null) {
+                        save { it.withoutPending(acc) }
                     }
                     val want = elsewhere(g, statuses)[acc] ?: 0
                     if (lim != null && kotlin.math.abs(lim.elsewhere - want) >= 15) spent.getOrPut(id) { HashMap() }[u.name] = want

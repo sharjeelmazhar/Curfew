@@ -220,6 +220,24 @@ curfew.pwd.getpwuid = real_pw
 curfew.RFKILL_DIR, curfew.sessions, curfew.human_users, curfew.act, curfew.notify, curfew.DRY, curfew.event_add = real
 shutil.rmtree(rf, ignore_errors=True)
 
+# --- a limit whose ending fails (loginctl timed out, say) is tried again, and only until it works
+real_dir, curfew.STATE_DIR = curfew.STATE_DIR, tempfile.mkdtemp(prefix="curfew-limit-")
+with curfew.state(write=True) as st:
+    st["limits"]["kid"] = {"minutes": 1, "action": "logout", "warn": False, "tell": True}
+seen = {"users": {"kid": {"days": {curfew.kept_days(time.time())[0]: {"used": 100, "on": 100}}, "logins": []}}}
+on_screen = [{"name": "kid", "admin": False, "state": "active"}]
+real2, tries = (curfew.act, curfew.notify, curfew.event_add, curfew.LIMIT_GRACE), []
+curfew.act = lambda what, argv: tries.append(argv) or len(tries) > 1
+curfew.notify, curfew.event_add, curfew.LIMIT_GRACE = (lambda *a, **k: None), (lambda *a, **k: None), 0
+for _ in range(5):
+    curfew.limits_check(seen, on_screen, time.time())
+check("a failed logout at the end of the time is tried again, then left alone",
+      tries == [["loginctl", "terminate-user", "kid"]] * 2)
+curfew.act, curfew.notify, curfew.event_add, curfew.LIMIT_GRACE = real2
+shutil.rmtree(curfew.STATE_DIR, ignore_errors=True)
+curfew.STATE_DIR = real_dir
+curfew.LIMIT_RUN.clear()
+
 agent = start()
 try:
     st, hello = http("GET", "/v1/hello")
