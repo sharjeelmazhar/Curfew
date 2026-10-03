@@ -467,4 +467,62 @@ class CurfewTest {
         assertEquals("Opened 5 min ago", formatAge(300))
         assertEquals("Opened 3 h ago", formatAge(3 * 3600 + 5))
     }
+
+    @Test fun loginsAreAnnouncedOnceAndOnlyAfterWatchingBegan() {
+        val old = LoginSeen("ali", 1000)
+        var m = Memory()
+        assertTrue(m.news(listOf(old)).isEmpty())                   // the first look announces nothing
+        m = m.seen(listOf(old), 2000)
+        assertEquals(2000L, m.watchFrom)
+        val new = LoginSeen("sara", 2100)
+        val earlier = LoginSeen("ali", 1500)                        // began before watching: not news either
+        assertEquals(listOf(new), m.news(listOf(old, earlier, new, new)))
+        m = m.seen(listOf(old, earlier, new), 2200)
+        assertTrue(m.news(listOf(old, new)).isEmpty())              // never twice
+        assertEquals(2000L, m.seen(emptyList(), 9999).watchFrom)     // watching does not start again
+    }
+
+    @Test fun aLoginThisPhoneApprovedIsNotNews() {
+        val m = Memory(watchFrom = 1000, approved = mapOf("ali" to 5000))
+        assertTrue(m.news(listOf(LoginSeen("ali", 5060))).isEmpty())
+        assertEquals(1, m.news(listOf(LoginSeen("ali", 9000))).size)        // a later login is
+        assertEquals(1, m.news(listOf(LoginSeen("sara", 5060))).size)       // and so is another account
+    }
+
+    @Test fun oldLoginsAndApprovalsAreForgotten() {
+        val now = 10L * 86400
+        val m = Memory(watchFrom = 1, announced = setOf(LoginSeen("a", now - LOGINS_KEPT_SECONDS - 1), LoginSeen("b", now - 60)),
+            approved = mapOf("a" to now - 7200, "b" to now - 60)).seen(emptyList(), now)
+        assertEquals(setOf(LoginSeen("b", now - 60)), m.announced)
+        assertEquals(setOf("b"), m.approved.keys)
+    }
+
+    @Test fun memoryRoundTrips() {
+        val m = Memory("{\"name\":\"x\"}", 11, null, 0, 5, setOf(LoginSeen("ali", 7)), mapOf("ali" to 9L))
+        val back = memoriesFromJson(memoriesToJson(mapOf("pc" to m)))
+        assertEquals(mapOf("pc" to m), back)
+        assertEquals(emptyMap<String, Memory>(), memoriesFromJson("not json"))
+        assertEquals(emptyMap<String, Memory>(), memoriesFromJson(null))
+    }
+
+    @Test fun loginsComeFromUsageAndStatus() {
+        val usage = parseUsage(JSONObject("""{"now": 100, "boot": 1, "users": [{"name": "ali", "state": "active", "days": [],
+            "logins": [{"start": 90, "end": null}, {"start": 50, "end": 60}]}]}"""))
+        assertEquals(listOf(LoginSeen("ali", 90), LoginSeen("ali", 50)), loginsOf(usage))
+        val st = parseStatus(JSONObject("""{"name": "pc", "users": [{"name": "ali", "state": "active", "since": 90},
+            {"name": "sara", "state": "none"}]}"""))
+        assertEquals(listOf(LoginSeen("ali", 90)), loginsOf(st))
+    }
+
+    @Test fun alertAndDayWords() {
+        val zone = java.time.ZoneOffset.UTC
+        val start = 1_759_438_500L                                  // 2 Oct 2025, 20:55 UTC
+        assertEquals("Ali logged in" to "On kids-laptop at 8:55 PM", loginAlert("Ali", "kids-laptop", start, start + 60, zone, false))
+        assertEquals("On kids-laptop at 2 Oct 2025, 20:55", loginAlert("Ali", "kids-laptop", start, start + 86400, zone, true).second)
+        val today = java.time.LocalDate.parse("2026-10-03")
+        assertEquals("Today", dayLabel("2026-10-03", today))
+        assertEquals("Yesterday", dayLabel("2026-10-02", today))
+        assertEquals("1 Oct 2026", dayLabel("2026-10-01", today))
+        assertEquals("junk", dayLabel("junk", today))
+    }
 }

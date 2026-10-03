@@ -14,6 +14,8 @@ android {
         targetSdk = 35
         versionCode = 2
         versionName = "1.1"
+        // Test builds only (build.sh test): no fingerprint lock, so the app can be driven over adb.
+        buildConfigField("boolean", "NO_LOCK", (project.findProperty("noLock") != null).toString())
     }
     signingConfigs {
         // A local key made by build.sh, only so the phone accepts updates of the same app.
@@ -37,7 +39,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
 }
 
 dependencies {

@@ -257,6 +257,80 @@ fun parseUsage(j: JSONObject): Usage {
     )
 }
 
+/** One login as the phone sees it: which account, and when it began (unix seconds). */
+data class LoginSeen(val user: String, val start: Long)
+
+/** The logins in [usage] (all of them) or [status] (only the current ones) as [LoginSeen]. */
+fun loginsOf(usage: Usage): List<LoginSeen> = usage.users.flatMap { u -> u.logins.map { LoginSeen(u.name, it.start) } }
+fun loginsOf(status: Status): List<LoginSeen> =
+    status.users.mapNotNull { u -> u.since?.takeIf { u.state != UserState.NONE }?.let { LoginSeen(u.name, it) } }
+
+/** How long the phone remembers which logins it already announced. */
+const val LOGINS_KEPT_SECONDS = 3L * 86400
+
+/** What the phone keeps about one computer between visits, so there is something to show while it
+ *  is off: its last answers ([status], [usage], as the JSON they came in) and when they came
+ *  ([statusAt], [usageAt], unix ms). [watchFrom] (unix seconds) is when the phone began watching for
+ *  logins, so logins from before it are never announced; [announced] are the logins already
+ *  announced; [approved] is when this phone last let each account in without its password. */
+data class Memory(
+    val status: String? = null, val statusAt: Long = 0, val usage: String? = null, val usageAt: Long = 0,
+    val watchFrom: Long = 0, val announced: Set<LoginSeen> = emptySet(), val approved: Map<String, Long> = emptyMap(),
+) {
+    /** The logins among [current] to tell the parent about. Not one from before the phone began
+     *  watching, not one already told, and not one that this phone itself let in a moment before. */
+    fun news(current: List<LoginSeen>): List<LoginSeen> = current.distinct().filter { l ->
+        watchFrom > 0 && l.start >= watchFrom && l !in announced &&
+            approved[l.user]?.let { l.start in it - 30..it + 180 } != true
+    }
+
+    /** After a look at [current] logins at [now] (unix seconds): starts watching on the first look,
+     *  remembers what was seen, and forgets logins too old to come up again. */
+    fun seen(current: List<LoginSeen>, now: Long): Memory = copy(
+        watchFrom = watchFrom.takeIf { it > 0 } ?: now,
+        announced = (announced + current).filter { it.start > now - LOGINS_KEPT_SECONDS }.toSet(),
+        approved = approved.filterValues { it > now - 3600 },
+    )
+
+    fun toJson(): JSONObject = JSONObject().put("status", status).put("statusAt", statusAt).put("usage", usage).put("usageAt", usageAt)
+        .put("watchFrom", watchFrom).put("approved", JSONObject(approved))
+        .put("announced", JSONArray(announced.map { JSONArray().put(it.user).put(it.start) }))
+
+    companion object {
+        fun fromJson(j: JSONObject): Memory {
+            val ap = j.optJSONObject("approved") ?: JSONObject()
+            val an = j.optJSONArray("announced") ?: JSONArray()
+            return Memory(
+                j.optString("status").takeIf { j.has("status") && !j.isNull("status") }, j.optLong("statusAt"),
+                j.optString("usage").takeIf { j.has("usage") && !j.isNull("usage") }, j.optLong("usageAt"),
+                j.optLong("watchFrom"),
+                (0 until an.length()).mapNotNull { an.optJSONArray(it) }.map { LoginSeen(it.optString(0), it.optLong(1)) }.toSet(),
+                ap.keys().asSequence().associateWith { ap.optLong(it) },
+            )
+        }
+    }
+}
+
+fun memoriesToJson(m: Map<String, Memory>): String = JSONObject().apply { m.forEach { (id, v) -> put(id, v.toJson()) } }.toString()
+
+fun memoriesFromJson(text: String?): Map<String, Memory> = try {
+    val j = JSONObject(text ?: "{}")
+    j.keys().asSequence().associateWith { Memory.fromJson(j.getJSONObject(it)) }
+} catch (e: Exception) {
+    emptyMap()
+}
+
+/** The words of a login notification: "Ali logged in" and "On kids-laptop at 8:55 PM". */
+fun loginAlert(name: String, computer: String, start: Long, now: Long, zone: ZoneId, h24: Boolean): Pair<String, String> =
+    "$name logged in" to ("On $computer at " + formatSince(start, now, zone, h24))
+
+/** A day of screen time named for the parent: "Today", "Yesterday", or its date when older. */
+fun dayLabel(date: String, today: LocalDate): String = when (runCatching { LocalDate.parse(date) }.getOrNull()) {
+    today -> "Today"
+    today.minusDays(1) -> "Yesterday"
+    else -> formatDay(date)
+}
+
 /** A length of time in whole minutes: "0 min", "45 min", "5 h 2 min". */
 fun formatDuration(seconds: Long): String = formatMinutes((seconds.coerceAtLeast(0) / 60).toInt())
 
