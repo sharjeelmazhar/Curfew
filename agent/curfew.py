@@ -1146,7 +1146,13 @@ def web_for(web, name):
 
 
 def web_write(path, data):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    """Every browser reads these as the person using it, so the folders must be readable by all
+    (the agent itself makes files private by default)."""
+    folder = os.path.dirname(path)
+    os.makedirs(folder, exist_ok=True)
+    while folder not in ("/", "/etc", "/etc/opt", STATE_DIR) and not folder.startswith(STATE_DIR + "/"):
+        os.chmod(folder, 0o755)
+        folder = os.path.dirname(folder)
     with open(path + ".tmp", "w") as f:
         json.dump(data, f, indent=1)
     os.chmod(path + ".tmp", 0o644)
