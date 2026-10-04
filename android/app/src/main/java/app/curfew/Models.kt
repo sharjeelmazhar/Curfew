@@ -187,7 +187,7 @@ enum class UserState(val label: String) {
 data class UserInfo(
     val name: String, val full: String, val admin: Boolean, val state: UserState,
     val netOff: Boolean = false, val netSeconds: Int? = null,
-    val since: Long? = null, val todaySeconds: Int? = null, val limit: LimitInfo? = null, val how: String = "",
+    val since: Long? = null, val todaySeconds: Int? = null, val limit: LimitInfo? = null, val how: String = "", val by: String = "",
 ) {
     val display get() = full.ifBlank { name }
 }
@@ -269,7 +269,7 @@ fun parseStatus(j: JSONObject): Status {
             UserInfo(it.optString("name"), it.optString("full"), it.optBoolean("admin"), UserState.of(it.optString("state")),
                 it.optString("net") == "off", it.optJSONObject("net_timer")?.optInt("remaining"),
                 it.optLong("since").takeIf { t -> t > 0 }, if (it.has("today")) it.optInt("today") else null,
-                parseLimit(it.optJSONObject("limit")), it.optString("how"))
+                parseLimit(it.optJSONObject("limit")), it.optString("how"), it.optString("by"))
         },
         timerSeconds = t?.optInt("remaining"),
         warn = t?.optBoolean("warn") ?: false,
@@ -382,12 +382,12 @@ fun parseUsage(j: JSONObject): Usage {
 }
 
 /** One login as the phone sees it: which account, and when it began (unix seconds). */
-data class LoginSeen(val user: String, val start: Long, val how: String = "")
+data class LoginSeen(val user: String, val start: Long, val how: String = "", val by: String = "")
 
 /** The logins in [usage] (all of them) or [status] (only the current ones) as [LoginSeen]. */
 fun loginsOf(usage: Usage): List<LoginSeen> = usage.users.flatMap { u -> u.logins.map { LoginSeen(u.name, it.start) } }
 fun loginsOf(status: Status): List<LoginSeen> =
-    status.users.mapNotNull { u -> u.since?.takeIf { u.state != UserState.NONE }?.let { LoginSeen(u.name, it, u.how) } }
+    status.users.mapNotNull { u -> u.since?.takeIf { u.state != UserState.NONE }?.let { LoginSeen(u.name, it, u.how, u.by) } }
 
 /** How long the phone remembers which logins it already announced. */
 const val LOGINS_KEPT_SECONDS = 3L * 86400
@@ -448,8 +448,13 @@ fun memoriesFromJson(text: String?): Map<String, Memory> = try {
 }
 
 /** The words of a login notification: "Ali logged in" and "On kids-laptop at 8:55 PM". */
-fun loginAlert(name: String, computer: String, how: String = ""): Pair<String, String> =
-    "$name logged in" to computer + when (how) { "password" -> " · with the password"; "phone" -> " · from your phone"; else -> "" }
+fun loginAlert(name: String, computer: String, how: String = "", by: String = ""): Pair<String, String> {
+    val phone = if (by.isBlank()) "a phone" else by
+    return when (how) {
+        "unlocked" -> "$name was let in" to "$computer · unlocked from $phone"
+        else -> "$name logged in" to computer + when (how) { "password" -> " · with the password"; "phone" -> " · let in from $phone"; else -> "" }
+    }
+}
 
 /** A day of screen time named for the parent: "Today", "Yesterday", or its date when older. */
 fun dayLabel(date: String, today: LocalDate): String = when (runCatching { LocalDate.parse(date) }.getOrNull()) {
@@ -645,7 +650,7 @@ fun errorText(error: String): String = when (error) {
  *  someone at the login screen. */
 data class AgentEvent(
     val seq: Int, val time: Long, val type: String, val user: String?, val start: Long = 0, val what: String = "",
-    val minutes: Int = 0, val used: Int = 0, val action: String = "", val tell: Boolean = true, val again: Boolean = false, val how: String = "",
+    val minutes: Int = 0, val used: Int = 0, val action: String = "", val tell: Boolean = true, val again: Boolean = false, val how: String = "", val by: String = "",
 )
 
 /** A watch answer: events after the phone's position, a "bye" when the computer is going away
@@ -660,7 +665,7 @@ fun parseWatch(j: JSONObject): WatchReply {
         (0 until es.length()).mapNotNull { es.optJSONObject(it) }.map {
             AgentEvent(
                 it.optInt("seq"), it.optLong("time"), it.optString("type"), it.text("user"), it.optLong("start"), it.optString("what"),
-                it.optInt("minutes"), it.optInt("used"), it.optString("action"), it.optBoolean("tell", true), it.optBoolean("again"), it.optString("how"),
+                it.optInt("minutes"), it.optInt("used"), it.optString("action"), it.optBoolean("tell", true), it.optBoolean("again"), it.optString("how"), it.optString("by"),
             )
         },
         j.text("bye")?.takeIf { it.isNotEmpty() }, j.optJSONObject("status"),

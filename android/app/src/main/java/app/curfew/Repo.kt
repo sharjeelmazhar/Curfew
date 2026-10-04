@@ -294,7 +294,7 @@ class Repo(private val app: Context) {
         if (news.isEmpty()) return
         writeMemory()                   // never announce the same login twice, even if the app is closed now
         for (l in news) {
-            val (title, text) = loginAlert(nameOf(c, l.user), c.title, l.how)
+            val (title, text) = loginAlert(nameOf(c, l.user), c.title, l.how, l.by)
             alert(AlertEntry("${c.id}/login/${l.user}/${l.start}", c.id, l.user, AlertKind.LOGIN, l.start, title, text), _store.value.prefs.logins)
         }
     }
@@ -340,7 +340,7 @@ class Repo(private val app: Context) {
         val now = System.currentTimeMillis() / 1000
         val (zone, h24) = Alerts.clock(app)
         val prefs = _store.value.prefs
-        announce(c, w.events.filter { it.type == "login" && it.user != null }.map { LoginSeen(it.user!!, it.start, it.how) })
+        announce(c, w.events.filter { it.type == "login" && it.user != null }.map { LoginSeen(it.user!!, it.start, it.how, it.by) })
         for (e in w.events) {
             val id = "${c.id}/${w.epoch}/${e.seq}"
             when (e.type) {

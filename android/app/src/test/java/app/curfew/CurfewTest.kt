@@ -521,7 +521,9 @@ class CurfewTest {
         val start = 1_759_438_500L                                  // 2 Oct 2025, 20:55 UTC
         assertEquals("Ali logged in" to "kids-laptop", loginAlert("Ali", "kids-laptop"))
         assertEquals("kids-laptop · with the password", loginAlert("Ali", "kids-laptop", "password").second)
-        assertEquals("kids-laptop · from your phone", loginAlert("Ali", "kids-laptop", "phone").second)
+        assertEquals("kids-laptop · let in from a phone", loginAlert("Ali", "kids-laptop", "phone").second)
+        assertEquals("kids-laptop · let in from Galaxy S24 Ultra", loginAlert("Ali", "kids-laptop", "phone", "Galaxy S24 Ultra").second)
+        assertEquals("Ali was let in" to "kids-laptop · unlocked from Redmi", loginAlert("Ali", "kids-laptop", "unlocked", "Redmi"))
         val today = java.time.LocalDate.parse("2026-10-03")
         assertEquals("Today", dayLabel("2026-10-03", today))
         assertEquals("Yesterday", dayLabel("2026-10-02", today))

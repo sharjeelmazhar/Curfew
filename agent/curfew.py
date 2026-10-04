@@ -980,28 +980,30 @@ def usage_look(users=None):
         SEEN["dirty"] = SEEN["dirty"] or json.dumps(SEEN["data"]["users"], sort_keys=True) != before
         seen = json.loads(json.dumps(SEEN["data"]))
     for name, start in logins:              # the phones hear of it at once
-        how = how_of(name, start)
-        event_add("login", user=name, start=start, **({"how": how} if how else {}))
+        event_add("login", user=name, start=start, **how_of(name, start))
     return seen
 
 
-def how_mark(name, how):
-    """Notes how an account was let in at the login screen: "phone" or "password"."""
+def how_mark(name, how, by=""):
+    """Notes how an account was let in at the login screen: "phone" (with the phone's name) or "password"."""
     with contextlib.suppress(OSError):
         os.makedirs(os.path.join(RUN_DIR, "how"), exist_ok=True)
         with open(os.path.join(RUN_DIR, "how", name), "w") as f:
-            f.write(how)
+            f.write("%s\n%s" % (how, by))
 
 
 def how_of(name, start):
-    """How the login that began at [start] was let in, if the login screen said so close to then."""
+    """How the login that began at [start] was let in, if the login screen said so close to
+    then: {"how": "phone"|"password", "by": the phone's name} or {}."""
     path = os.path.join(RUN_DIR, "how", name)
     with contextlib.suppress(OSError):
         if abs(os.stat(path).st_mtime - start) <= 120:
             with open(path) as f:
-                how = f.read().strip()
-            return how if how in ("phone", "password") else None
-    return None
+                how, _, by = f.read().partition("\n")
+            how, by = how.strip(), by.strip()
+            if how in ("phone", "password"):
+                return dict({"how": how}, **({"by": by} if how == "phone" and by else {}))
+    return {}
 
 
 def sessions_mark():
@@ -1755,9 +1757,7 @@ def op_status(req, st):
         u.pop("since", None)
         if u["state"] != "none" and mine["logins"] and mine["logins"][-1][1] is None:
             u["since"] = mine["logins"][-1][0]
-            how = how_of(u["name"], u["since"])
-            if how:
-                u["how"] = how
+            u.update(how_of(u["name"], u["since"]))
         u["today"] = int(mine["days"].get(kept_days(now)[0], {}).get("used", 0))
         e = st["net"].get(u["name"]) or {}
         u["net"] = "off" if e.get("blocked") and not u["admin"] else "on"
@@ -1907,8 +1907,11 @@ def op_login(req, st):
     if not u:
         return {"ok": False, "error": "bad_user"}
     name = u["name"]
+    by = st["phones"].get(req["_phone"], {}).get("name") or ""
     if demo():
         log("would log in " + name)
+        if u["state"] != "none":
+            event_add("login", user=name, start=int(time.time()), how="unlocked", **({"by": by} if by else {}))
         return {"ok": True, "how": "approved" if u["state"] == "none" else "unlocked", "seconds": LOGIN_SECONDS}
     live = sessions()
     mine = [s["id"] for s in live if s["user"] == name and s["graphical"]]
@@ -1918,8 +1921,8 @@ def op_login(req, st):
     if hook:
         os.makedirs(os.path.dirname(login_path(name)), mode=0o700, exist_ok=True)
         with open(login_path(name), "w") as f:
-            f.write(str(time.time() + LOGIN_SECONDS))
-        log("login approved for %s by phone %r" % (name, st["phones"].get(req["_phone"], {}).get("name")))
+            f.write("%s\n%s" % (time.time() + LOGIN_SECONDS, by))
+        log("login approved for %s by phone %r" % (name, by))
     real = find_user(req)
     threading.Thread(target=unlock_keyring, daemon=True, args=(real, LOGIN_SECONDS + 30 if not mine else 15)).start()
     if not mine:
@@ -1929,6 +1932,8 @@ def op_login(req, st):
             lock_screen(s)
     ok = (act("bring the session of %s to the screen" % name, ["loginctl", "activate", mine[0]])
           and act("unlock the screen of " + name, ["loginctl", "unlock-session", mine[0]]))
+    if ok:      # not a new login, but the other phones should hear that this phone let them in
+        event_add("login", user=name, start=int(time.time()), how="unlocked", **({"by": by} if by else {}))
     return {"ok": True, "how": "unlocked", "seconds": LOGIN_SECONDS} if ok else {"ok": False, "error": "failed"}
 
 
@@ -2025,14 +2030,15 @@ def cmd_pam_login():
         return 1
     try:
         with open(login_path(name)) as f:
-            expires = float(f.read())
+            expires, _, by = f.read().partition("\n")
+            expires = float(expires)
         os.unlink(login_path(name))
     except (OSError, ValueError):
         return 1
     if expires < time.time():
         return 1
     log("let %s in without a password (approved from a phone)" % name)
-    how_mark(name, "phone")
+    how_mark(name, "phone", by.strip())
     return 0
 
 
