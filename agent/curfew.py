@@ -654,8 +654,72 @@ def _dedupe(entries):
     return out
 
 
+HISTORY_TICK = 60               # how often a child's history is copied into Curfew's own
+HISTORY_KEPT = 5000             # rows per browser in that copy
+_history_lock = threading.Lock()
+
+
+def history_kept(name, live):
+    """Curfew's own copy of a child's history (root only, in STATE_DIR), so that clearing the
+    browser's history does not clear what the parent sees. [live] is what the browsers hold now;
+    it is added to the copy, and the copy (last HISTORY_DAYS days) is returned per browser."""
+    path = os.path.join(STATE_DIR, "history.json")
+    cutoff = time.time() - HISTORY_DAYS * 86400
+    with _history_lock:
+        try:
+            with open(path) as f:
+                kept = json.load(f)
+        except (OSError, ValueError):
+            kept = {}
+        mine = kept.setdefault(name, {})
+        for b in live:
+            old = mine.get(b["id"], {}).get("recent", [])
+            have = {(e["url"], e.get("when")) for e in old}
+            rows = old + [e for e in b["recent"] if (e["url"], e.get("when")) not in have]
+            rows = sorted((e for e in rows if e.get("when", 0) >= cutoff), key=lambda e: -e.get("when", 0))[:HISTORY_KEPT]
+            mine[b["id"]] = {"name": b["name"], "recent": rows}
+        for bid in list(mine):
+            mine[bid]["recent"] = [e for e in mine[bid]["recent"] if e.get("when", 0) >= cutoff]
+            if not mine[bid]["recent"]:
+                del mine[bid]
+        if not mine:
+            kept.pop(name, None)
+        fd = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump(kept, f)
+        os.replace(path + ".tmp", path)
+        return json.loads(json.dumps(kept.get(name, {})))
+
+
+def history_loop():
+    """Copies every child's history once a minute, also while nobody asks for it."""
+    while True:
+        time.sleep(HISTORY_TICK)
+        for u in human_users():
+            if not u["admin"]:
+                try:
+                    browser_activity(u)
+                except Exception as e:
+                    log("copying the history of %s failed: %r" % (u["name"], e))
+
+
 def browser_activity(user):
-    """Per browser this account has used: the tabs open now and the recent history."""
+    """Per browser this account has used: the tabs open now and the recent history. For a child
+    the history comes from Curfew's own copy, so pages stay listed after the history is cleared."""
+    out = browsers_now(user)
+    if user.get("admin"):
+        return out
+    kept = history_kept(user["name"], out)
+    live = {b["id"]: b for b in out}
+    for bid, k in kept.items():
+        b = live.setdefault(bid, {"id": bid, "name": k["name"], "open": []})
+        b["recent"] = _dedupe(k["recent"])[:HISTORY_MAX]
+    order = [b["id"] for b in out] + [bid for bid in kept if bid not in {b["id"] for b in out}]
+    return [live[bid] for bid in order]
+
+
+def browsers_now(user):
+    """What the browsers themselves hold now."""
     home = user["home"]
     out = []
     for spec in BROWSERS:
@@ -2195,6 +2259,8 @@ def serve():
     threading.Thread(target=timer_loop, daemon=True).start()
     threading.Thread(target=usage_loop, daemon=True).start()
     threading.Thread(target=web_loop, daemon=True).start()
+    if not DRY:
+        threading.Thread(target=history_loop, daemon=True).start()
     if not DRY:
         threading.Thread(target=radio_loop, daemon=True).start()
         if shutil.which("journalctl"):
