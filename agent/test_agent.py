@@ -355,7 +355,11 @@ try:
     check("approval is private", oct(os.stat(token).st_mode & 0o777) == "0o600")
     check("approval is for that account only", pam("root") == 1 and pam("nobody") == 1 and pam("../" + me) == 1)
     check("approval is not used outside a login", pam(kind="account") == 1 and os.path.exists(token))
+    check("the approval names the phone", open(token).read().partition("\n")[2] != "")
     check("approved login is let in", pam() == 0)
+    how = open(TMP + "/run/how/" + me).read()
+    check("the login is noted as from that phone", how.startswith("phone\n") and len(how) > 6
+          and curfew.how_of.__doc__ is not None)
     check("approval works once", pam() == 1 and not os.path.exists(token))
     call(a, "login", user=me)
     open(token, "w").write(str(time.time() - 1))
@@ -453,7 +457,11 @@ try:
     check("cancelling the countdown leaves it on", call(a, "net_clear", user="classes")[1]["ok"] and state()["net"] == {})
     r = call(a, "login", user="dad")[1]
     check("login for an account that is not logged in waits at the login screen", r["how"] == "approved" and r["seconds"] == 120)
+    w0 = call(a, "watch", after=-1, wait=1)[1]
+    before = w0["seq"]
     check("login for an open session unlocks it", call(a, "login", user="classes")[1]["how"] == "unlocked")
+    ev = call(a, "watch", after=before, epoch=w0["epoch"], wait=1)[1]["events"]
+    check("the other phones hear that a phone unlocked it", any(e["type"] == "login" and e.get("how") == "unlocked" and e["user"] == "classes" for e in ev))
     # --- watching: the phone keeps a call open and hears of what happens within a second
     agent.terminate(); agent.wait()
     kids = TMP + "/kids.json"

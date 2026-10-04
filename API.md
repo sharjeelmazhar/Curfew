@@ -101,7 +101,7 @@ the phone asks again with `after` set to the `seq` it got. Events are numbered w
 `shutdown`, `reboot`, `sleep` (the system-sleep hook) or `restart` (only the Curfew service
 restarts, as in an update). Events, oldest first, at most 100, kept for 3 days:
 
-- `{"seq", "time", "type": "login", "user", "start", "how"?}`: an account logged in. `how` (when the login screen said so): `password` or `phone`. The same `how` is in `status` next to `since`.
+- `{"seq", "time", "type": "login", "user", "start", "how"?}`: an account logged in. `how` (when the login screen said so): `password` or `phone` (then `by`: the name of the phone that let them in); `unlocked` when a phone unlocked a session that was already open (`start` is then that moment). The same `how` is in `status` next to `since`.
 - `{"seq", "time", "type": "tamper", "user", "what"}`: someone tried to cut the network. `user`
   is null at the login screen. `what` is `airplane` (undone at once), `wifi_off`, `network_off`,
   `disconnect`, `wifi_settings` (a password or other setting), `forget_network`,
