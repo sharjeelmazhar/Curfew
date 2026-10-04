@@ -546,6 +546,18 @@ try:
     check("an emptied account list is forgotten", call(a, "web_set", user="gaming", sites=[])[1]["web"]["users"] == {})
     check("a bad site is refused", call(a, "web_set", sites=["not a site"])[1] == {"ok": False, "error": "bad_site"})
     check("status tells the sites", call(a, "status")[1]["web"]["sites"] == ["discord.com", "youtube.com"] and "web" in call(a, "status")[1]["caps"])
+    # Curfew's own copy of a child's history
+    saved_dir, curfew.STATE_DIR = curfew.STATE_DIR, tempfile.mkdtemp()
+    now = int(time.time())
+    page = lambda u, w: {"url": u, "title": "", "host": "", "when": w}
+    curfew.history_kept("kid", [{"id": "firefox", "name": "Firefox", "recent": [page("https://a.com/", now - 60), page("https://old.com/", now - 9 * 86400)]}])
+    k = curfew.history_kept("kid", [{"id": "firefox", "name": "Firefox", "recent": []}])      # the child cleared the history
+    check("cleared history stays in Curfew's copy", [e["url"] for e in k["firefox"]["recent"]] == ["https://a.com/"])
+    k = curfew.history_kept("kid", [{"id": "firefox", "name": "Firefox", "recent": [page("https://b.com/", now), page("https://a.com/", now - 60)]}])
+    check("new pages are added once, newest first", [e["url"] for e in k["firefox"]["recent"]] == ["https://b.com/", "https://a.com/"])
+    check("the copy is readable by root only", oct(os.stat(os.path.join(curfew.STATE_DIR, "history.json")).st_mode & 0o777) == "0o600")
+    shutil.rmtree(curfew.STATE_DIR, ignore_errors=True)
+    curfew.STATE_DIR = saved_dir
     check("no limit for an admin", call(a, "limit_set", user="dad", minutes=60)[1] == {"ok": False, "error": "is_admin"})
     check("no limit for an unknown account", call(a, "limit_set", user="x", minutes=60)[1] == {"ok": False, "error": "bad_user"})
     check("bad limits are refused", all(call(a, "limit_set", user="gaming", **k)[1] == {"ok": False, "error": "bad_args"} for k in
