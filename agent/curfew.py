@@ -22,6 +22,7 @@ import os
 import pwd
 import re
 import secrets
+import select
 import shutil
 import signal
 import socket
@@ -74,10 +75,12 @@ def state(write=False):
             st, write = {}, True
         if "id" not in st:
             st["id"], write = secrets.token_hex(8), True
-        for k in ("phones", "removed", "net"):
+        for k in ("phones", "removed", "net", "limits"):
             st.setdefault(k, {})
         for k in ("pairing", "timer"):
             st.setdefault(k, None)
+        st.setdefault("web", {"sites": [], "private": False})
+        st["web"].setdefault("users", {})
         yield st
         if write:
             tmp = path + ".tmp"
@@ -673,11 +676,145 @@ def browser_activity(user):
     return out
 
 
+# -------------------------------------------------------------------- events
+#
+# What the phones are told of as it happens: logins, a child trying to switch the Wi-Fi off or
+# change the network, a screen-time limit running out. Numbered; a phone keeps a "watch" call
+# open (op_watch) and gets each one within a second. Kept on disk so a phone that was away hears
+# of them when it comes back.
+
+EVENTS_KEPT = 200
+EVENTS_SECONDS = 3 * 86400
+WATCH_WAIT = 60                 # the longest a watch call is held open
+EV = {"cond": threading.Condition(), "data": None, "bye": None, "watchers": {}}
+
+
+def events_load():
+    try:
+        with open(os.path.join(STATE_DIR, "events.json")) as f:
+            d = json.load(f)
+        if isinstance(d.get("epoch"), str) and isinstance(d.get("seq"), int) and isinstance(d.get("list"), list):
+            return d
+    except (OSError, ValueError, AttributeError):
+        pass
+    # a new numbering: phones that knew the old one start again from here
+    return {"epoch": secrets.token_hex(8), "seq": 0, "list": []}
+
+
+def events_data():
+    """Under EV["cond"]."""
+    if EV["data"] is None:
+        EV["data"] = events_load()
+    return EV["data"]
+
+
+def event_add(kind, **fields):
+    now = time.time()
+    with EV["cond"]:
+        d = events_data()
+        d["seq"] += 1
+        d["list"] = [e for e in d["list"] if e.get("time", 0) > now - EVENTS_SECONDS][-(EVENTS_KEPT - 1):]
+        d["list"].append(dict(fields, seq=d["seq"], time=int(now), type=kind))
+        EV["cond"].notify_all()
+        # written under the lock, so a slower writer can never put back an older list
+        with contextlib.suppress(OSError):
+            os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
+            path = os.path.join(STATE_DIR, "events.json")
+            fd = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f:
+                f.write(json.dumps(d))
+            os.replace(path + ".tmp", path)
+    log("event: %s %s" % (kind, " ".join("%s=%s" % kv for kv in sorted(fields.items()))))
+
+
+def say_bye(why):
+    """Tell every phone that is watching that this computer is going away now ('shutdown',
+    'reboot', 'sleep', 'restart' of the agent alone), or that it is back (None)."""
+    with EV["cond"]:
+        EV["bye"] = why
+        EV["cond"].notify_all()
+
+
+def going_down():
+    """Why the agent is being stopped: the computer shuts down or restarts, or only the agent."""
+    if DRY:
+        return "restart"
+    jobs = run(["systemctl", "list-jobs", "--no-legend"], timeout=2)
+    if "reboot.target" in jobs or "kexec.target" in jobs:
+        return "reboot"
+    if "poweroff.target" in jobs or "halt.target" in jobs:
+        return "shutdown"
+    return "shutdown" if run(["systemctl", "is-system-running"], timeout=2).strip() == "stopping" else "restart"
+
+
+def fake_event_loop():
+    """Dry run only: events asked for with "curfew.py --dry-run fake ...", to try the phone out."""
+    path = os.path.join(STATE_DIR, "fake-events")
+    while True:
+        time.sleep(0.3)
+        try:
+            os.replace(path, path + ".now")
+            with open(path + ".now") as f:
+                asks = [json.loads(ln) for ln in f if ln.strip()]
+        except (OSError, ValueError):
+            continue
+        for a in asks:
+            if a.get("type") == "bye":
+                say_bye(a.get("why"))
+            elif a.get("type") == "tamper":
+                event_add("tamper", user=a.get("user"), what=a.get("what"))
+
+
+def cmd_fake(args):
+    """curfew.py --dry-run fake tamper USER WHAT | fake bye shutdown|reboot|sleep|back"""
+    if args[:1] == ["tamper"] and len(args) == 3:
+        ask = {"type": "tamper", "user": args[1] if args[1] != "-" else None, "what": args[2]}
+    elif args[:1] == ["bye"] and len(args) == 2:
+        ask = {"type": "bye", "why": None if args[1] == "back" else args[1]}
+    else:
+        print(cmd_fake.__doc__)
+        return 1
+    with open(os.path.join(STATE_DIR, "fake-events"), "a") as f:
+        f.write(json.dumps(ask) + "\n")
+    return 0
+
+
+def op_watch(req, st):
+    """Held open until something happens (or `wait` seconds pass), then answers with the events
+    after `after` and the status. A phone keeps one of these open at all times."""
+    after, wait, epoch = req.get("after"), req.get("wait", 0), req.get("epoch")
+    if (not isinstance(after, int) or isinstance(after, bool) or not isinstance(wait, int) or isinstance(wait, bool)
+            or not 0 <= wait <= WATCH_WAIT or not (epoch is None or isinstance(epoch, str))):
+        return {"ok": False, "error": "bad_args"}
+    me, end = object(), time.monotonic() + wait
+    with EV["cond"]:
+        d = events_data()
+        if epoch != d["epoch"] or not 0 <= after <= d["seq"]:
+            after = d["seq"]            # a phone new to this numbering starts from now
+            end = time.monotonic()
+        EV["watchers"][req["_phone"]] = me      # a newer watch from the same phone ends this one
+        EV["cond"].notify_all()
+        while (d["seq"] <= after and EV["bye"] is None and EV["watchers"].get(req["_phone"]) is me
+               and time.monotonic() < end):
+            EV["cond"].wait(end - time.monotonic())
+            d = events_data()
+        if EV["watchers"].get(req["_phone"]) is me:
+            del EV["watchers"][req["_phone"]]
+        news = [e for e in d["list"] if e["seq"] > after][-100:]
+        out = {"ok": True, "epoch": d["epoch"], "seq": d["seq"], "events": news, "bye": EV["bye"]}
+    if out["bye"]:                      # going away: answer at once, without asking logind
+        return out
+    with state() as fresh:              # the state may have changed while this waited
+        pass
+    out["status"] = op_status(req, fresh)
+    return out
+
+
 # --------------------------------------------------------------- screen time
 
 USAGE_TICK = 15                 # seconds between looks at who is logged in
 USAGE_SAVE = 60                 # seconds between writes to disk
-USAGE_DAYS = 2                  # today and yesterday
+USAGE_DAYS = 7                  # today and the 6 days before
 USAGE_LOGINS = 40               # logins remembered per account
 SEEN = {"lock": threading.Lock(), "data": None, "looked": None, "saved": 0.0, "dirty": False}
 
@@ -705,8 +842,10 @@ def kept_days(now):
 def usage_step(d, users, now, dt):
     """One look at the accounts. Adds dt seconds to everyone logged in ('on') and to whoever
     is on the screen with it unlocked ('used'), and notes logins and logouts. A locked screen
-    and an account switched to the background are logged in but not in use."""
+    and an account switched to the background are logged in but not in use.
+    Returns the logins that began since the last look, as (account, start)."""
     days = kept_days(now)
+    new = []
     oldest = time.mktime(datetime.date.fromisoformat(days[-1]).timetuple())
     for u in users:
         if u["state"] == "none":
@@ -718,6 +857,7 @@ def usage_step(d, users, now, dt):
                 row["used"] = round(row["used"] + dt, 1)
         if not e["logins"] or e["logins"][-1][1] is not None:
             e["logins"].append([int(u.get("since") or now), None])
+            new.append((u["name"], e["logins"][-1][0]))
     here = {u["name"] for u in users if u["state"] != "none"}
     for name, e in d["users"].items():
         if name not in here and e["logins"] and e["logins"][-1][1] is None:
@@ -725,6 +865,7 @@ def usage_step(d, users, now, dt):
         e["days"] = {k: v for k, v in e["days"].items() if k in days}
         e["logins"] = [x for x in e["logins"] if x[1] is None or x[1] >= oldest][-USAGE_LOGINS:]
     d["seen"] = int(now)
+    return new
 
 
 def usage_load(now):
@@ -771,29 +912,77 @@ def usage_look(users=None):
         dt = 0.0 if SEEN["looked"] is None else min(max(tick - SEEN["looked"], 0.0), 2.0 * USAGE_TICK)
         SEEN["looked"] = tick
         before = json.dumps(SEEN["data"]["users"], sort_keys=True)
-        usage_step(SEEN["data"], users, now, dt)
+        logins = usage_step(SEEN["data"], users, now, dt)
         SEEN["dirty"] = SEEN["dirty"] or json.dumps(SEEN["data"]["users"], sort_keys=True) != before
-        return json.loads(json.dumps(SEEN["data"]))
+        seen = json.loads(json.dumps(SEEN["data"]))
+    for name, start in logins:              # the phones hear of it at once
+        how = how_of(name, start)
+        event_add("login", user=name, start=start, **({"how": how} if how else {}))
+    return seen
+
+
+def how_mark(name, how):
+    """Notes how an account was let in at the login screen: "phone" or "password"."""
+    with contextlib.suppress(OSError):
+        os.makedirs(os.path.join(RUN_DIR, "how"), exist_ok=True)
+        with open(os.path.join(RUN_DIR, "how", name), "w") as f:
+            f.write(how)
+
+
+def how_of(name, start):
+    """How the login that began at [start] was let in, if the login screen said so close to then."""
+    path = os.path.join(RUN_DIR, "how", name)
+    with contextlib.suppress(OSError):
+        if abs(os.stat(path).st_mtime - start) <= 120:
+            with open(path) as f:
+                how = f.read().strip()
+            return how if how in ("phone", "password") else None
+    return None
+
+
+def sessions_mark():
+    """Something that changes whenever someone logs in or out, locks or unlocks: logind's
+    session files (or the made-up users of a dry run). Cheap enough to look at every 2 seconds."""
+    if demo() is not None:
+        with contextlib.suppress(OSError):
+            return os.stat(os.environ["CURFEW_FAKE"]).st_mtime_ns
+        return None
+    mark = []
+    for d in ("/run/systemd/sessions", "/run/systemd/users"):
+        with contextlib.suppress(OSError):
+            for e in os.scandir(d):
+                with contextlib.suppress(OSError):
+                    mark.append((e.name, e.stat().st_mtime_ns))
+    return sorted(mark)
 
 
 def usage_loop():
+    """Looks every USAGE_TICK seconds, at once when the sessions change (so a login is told to
+    the phones within seconds), and every LIMIT_TICK seconds while a screen-time limit is close."""
+    mark, looked, fast = None, -1e9, False
     while True:
         try:
-            usage_look()
+            now_mark = sessions_mark()
+            if (now_mark != mark or LIMIT_WAKE.is_set()
+                    or time.monotonic() - looked >= (LIMIT_TICK if fast else USAGE_TICK)):
+                mark, looked = now_mark, time.monotonic()
+                LIMIT_WAKE.clear()
+                users = all_users()
+                seen = usage_look(users)
+                fast = limits_check(seen, users, time.time())
             if time.monotonic() - SEEN["saved"] >= USAGE_SAVE:
                 usage_save()
         except Exception as e:
             log("screen time failed: %r" % e)
-        time.sleep(USAGE_TICK)
+        time.sleep(LIMIT_TICK)
 
 
 # ------------------------------------------------------------------- actions
 
 def power(kind):
     if kind == "reboot":
-        act("restart the computer", ["systemctl", "reboot", "-i"])
-    else:
-        act("power off", ["systemctl", "poweroff", "-i"])
+        return act("restart the computer", ["systemctl", "reboot", "-i"])
+    return act("power off", ["systemctl", "poweroff", "-i"])
 
 
 def human(seconds):
@@ -818,6 +1007,8 @@ def lock_screen(s):
 
 def notify(text, only=None):
     """Show a notice to everyone with a desktop session, or to one user."""
+    if demo() is not None:              # made-up accounts have no desktop to show it on
+        return log("would notify %s: %s" % (only or "everyone", text))
     for s in sessions():
         if s["graphical"] and only in (None, s["user"]):
             with contextlib.suppress(KeyError):
@@ -840,6 +1031,31 @@ def fw_rules(uid):
             who + ["!", "-o", "lo", "-j", "REJECT"]]
 
 
+WIRED = ("en+", "eth+", "usb+")   # cable and USB network devices; Wi-Fi ("wl...") is left alone
+
+
+def fw_wired(uid):
+    """Accounts that are not administrators reach the internet over Wi-Fi only, where the
+    parent's Wi-Fi rules apply, not through a cable plugged in."""
+    who = ["-m", "owner", "--uid-owner", str(uid)]
+    return [who + ["-o", dev, "-j", "REJECT"] for dev in WIRED]
+
+
+def fw_sites(uid, sites):
+    """Blocked websites for one account: the site's name travels in the clear when a browser
+    connects (the TLS "server name", or the Host line of plain HTTP), so the firewall can refuse
+    those connections. QUIC is refused too, so browsers fall back to connections it can read."""
+    if not sites:
+        return []
+    who = ["-m", "owner", "--uid-owner", str(uid)]
+    return ([who + ["-p", "udp", "--dport", "443", "-j", "REJECT"]]
+            + [who + ["-p", "tcp", "-m", "multiport", "--dports", "80,443", "-m", "string", "--algo", "bm",
+                      "--string", site, "-j", "REJECT", "--reject-with", "tcp-reset"] for site in sites])
+
+
+_fw_done = {}
+
+
 def net_supported():
     return DRY or bool(shutil.which("iptables"))
 
@@ -850,7 +1066,10 @@ def net_sync():
     with state() as st:
         pass
     off = {n for n, e in st["net"].items() if e.get("blocked")}
-    users = [u for u in human_users() if u["name"] in off and not u["admin"]]
+    kids = [u for u in human_users() if not u["admin"]]
+    users = [u for u in kids if u["name"] in off]
+    rules = [r for u in kids for r in (fw_rules(u["uid"]) if u["name"] in off
+                                       else fw_wired(u["uid"]) + fw_sites(u["uid"], web_for(st["web"], u["name"])[0]))]
     if DRY:
         log("would block the internet for: " + (", ".join(u["name"] for u in users) or "nobody"))
         return True
@@ -862,25 +1081,186 @@ def net_sync():
                 continue
             ipt = lambda *a: subprocess.run([tool, "-w", "5", *a], capture_output=True, text=True, timeout=15)
             have = ipt("-S", FW_CHAIN)
-            if have.returncode != 0 and not users:
+            if have.returncode != 0 and not rules:
                 continue
-            want = sorted(str(u["uid"]) for u in users for _ in fw_rules(u["uid"]))
+            want = sorted(re.search(r"--uid-owner (\d+)", " ".join(r)).group(1) for r in rules)
             first = [ln for ln in ipt("-S", "OUTPUT").stdout.splitlines() if ln.startswith("-A ")][:1]
-            if (have.returncode == 0 and first == ["-A OUTPUT -j " + FW_CHAIN]
+            if (have.returncode == 0 and first == ["-A OUTPUT -j " + FW_CHAIN] and _fw_done.get(tool) == rules
                     and sorted(re.findall(r"--uid-owner (\d+)", have.stdout)) == want):
                 continue
             log("updating %s: internet off for %s" % (tool, ", ".join(u["name"] for u in users) or "nobody"))
             ipt("-N", FW_CHAIN)
             ipt("-F", FW_CHAIN)
-            done = [ipt("-A", FW_CHAIN, *r).returncode == 0 for u in users for r in fw_rules(u["uid"])]
+            done = [ipt("-A", FW_CHAIN, *r).returncode == 0 for r in rules]
             while ipt("-D", "OUTPUT", "-j", FW_CHAIN).returncode == 0:
                 pass
             done.append(ipt("-I", "OUTPUT", "1", "-j", FW_CHAIN).returncode == 0)   # ahead of any other rule
+            _fw_done[tool] = rules if all(done) else None
             ok = ok and all(done)
     except (OSError, subprocess.SubprocessError) as e:
         log("firewall error: %r" % e)
         return False
     return ok
+
+
+# --------------------------------------------- blocked websites, private windows
+
+SITE_RE = re.compile(r"^(?=.{4,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}$")
+SITES_MAX = 500
+FIREFOX_POLICIES = "/etc/firefox/policies/policies.json"
+# Chrome and its relatives read every file in these folders (only for the browsers installed)
+CHROME_POLICIES = {"google-chrome": "/etc/opt/chrome/policies/managed", "chromium": "/etc/chromium/policies/managed",
+                   "chromium-browser": "/etc/chromium-browser/policies/managed",
+                   "brave-browser": "/etc/brave/policies/managed", "microsoft-edge": "/etc/opt/edge/policies/managed"}
+WEB_TICK = 2
+_web_done = {"key": None}
+
+
+def site_of(text):
+    """The site a parent typed or picked: "https://www.YouTube.com/watch?v=1" -> "youtube.com"."""
+    t = str(text).strip().lower()
+    t = re.sub(r"^[a-z][a-z0-9+.-]*://", "", t)
+    t = re.split(r"[/?#:]", t, 1)[0].strip(".")
+    t = re.sub(r"^www\d*\.", "", t)
+    return t if SITE_RE.match(t) else None
+
+
+def web_policies(sites, private):
+    """What the browsers are told: (Firefox's policies, Chrome's policies)."""
+    ff = {"DNSOverHTTPS": {"Enabled": False, "Locked": True}}     # name lookups stay where the firewall sees them
+    ch = {"DnsOverHttpsMode": "off"}
+    if private:
+        ff["DisablePrivateBrowsing"] = True
+        ch["IncognitoModeAvailability"] = 1
+    if sites:
+        ff["WebsiteFilter"] = {"Block": ["*://*.%s/*" % x for x in sites]}
+        ch["URLBlocklist"] = list(sites)
+    return ff, ch
+
+
+def web_for(web, name):
+    """The rules for one account: the computer's own, and on top the account's."""
+    mine = (web.get("users") or {}).get(name) or {}
+    sites = sorted(set(web.get("sites") or []) | set(mine.get("sites") or []))
+    return sites, bool(web.get("private")) or bool(mine.get("private"))
+
+
+def web_write(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + ".tmp", "w") as f:
+        json.dump(data, f, indent=1)
+    os.chmod(path + ".tmp", 0o644)
+    os.replace(path + ".tmp", path)
+
+
+def web_firefox(ff):
+    """Firefox has one policies file. One that was there before Curfew is kept aside and merged."""
+    keep = os.path.join(STATE_DIR, "firefox-policies.orig")
+    mine = os.path.join(STATE_DIR, "firefox-policies.mine")
+    have = None
+    with contextlib.suppress(OSError, ValueError):
+        with open(FIREFOX_POLICIES) as f:
+            have = json.load(f)
+    ours = None
+    with contextlib.suppress(OSError, ValueError):
+        with open(mine) as f:
+            ours = json.load(f)
+    if have is not None and have != ours and not os.path.exists(keep):
+        shutil.copyfile(FIREFOX_POLICIES, keep)
+    orig = None
+    with contextlib.suppress(OSError, ValueError):
+        with open(keep) as f:
+            orig = json.load(f)
+    if ff is None:
+        if os.path.exists(keep):
+            shutil.copyfile(keep, FIREFOX_POLICIES)
+            os.unlink(keep)
+        elif have is not None and have == ours:
+            os.unlink(FIREFOX_POLICIES)
+        with contextlib.suppress(OSError):
+            os.unlink(mine)
+        return
+    data = dict(orig or {})
+    data["policies"] = dict((orig or {}).get("policies") or {}, **ff)
+    web_write(FIREFOX_POLICIES, data)
+    web_write(mine, data)
+
+
+def web_sync(force=False):
+    """While a child (or nobody) is at the screen, the browsers get the parent's rules; while an
+    administrator is, they are taken away again. Browsers read them when they start."""
+    with state() as st:
+        pass
+    admins = {u["name"] for u in human_users() if u["admin"]}
+    front = [s["user"] for s in sessions() if s["active"]]
+    admin_front = any(n in admins for n in front)
+    # the child at the screen gets their own rules; with nobody there, the computer's
+    sites, private = web_for(st["web"], front[0] if front else "")
+    on = bool(sites or private) and not admin_front
+    key = json.dumps([sites, private]) if on else None
+    if key == _web_done["key"] and not force:
+        return
+    _web_done["key"] = key
+    ff, ch = web_policies(sites, private) if on else (None, None)
+    if DRY:
+        log("would set the browsers' rules: %s" % (json.dumps({"firefox": ff, "chrome": ch}) if on else "none"))
+        return
+    try:
+        if ff is not None or os.path.exists(FIREFOX_POLICIES):
+            web_firefox(ff)
+        for prog, folder in CHROME_POLICIES.items():
+            path = os.path.join(folder, "curfew.json")
+            if ch is not None and (shutil.which(prog) or os.path.isdir(os.path.dirname(os.path.dirname(folder)))):
+                web_write(path, ch)
+            elif ch is None:
+                with contextlib.suppress(OSError):
+                    os.unlink(path)
+        log("browser rules %s" % ("on: %d blocked sites, private windows %s" % (len(sites), "blocked" if private else "allowed") if on else "off"))
+    except OSError as e:
+        _web_done["key"] = None
+        log("could not set the browsers' rules: %r" % e)
+
+
+def web_loop():
+    while True:
+        try:
+            web_sync()
+        except Exception as e:
+            log("browser rules failed: %r" % e)
+        time.sleep(WEB_TICK)
+
+
+def op_web_set(req, st):
+    """The blocked websites of this computer ("sites", replaces the list) and whether children
+    may open private windows ("private": true blocks them). With "user", the same for that one
+    account, on top of the computer's. Administrators are never limited."""
+    name = req.get("user")
+    if name is not None:
+        u = next((u for u in all_users() if u["name"] == name), None)
+        if not u:
+            return {"ok": False, "error": "bad_user"}
+        if u["admin"]:
+            return {"ok": False, "error": "is_admin"}
+    with state(write=True) as s:
+        web = s["web"] if name is None else s["web"]["users"].setdefault(name, {"sites": [], "private": False})
+        if "sites" in req:
+            raw = req["sites"]
+            if not isinstance(raw, list) or len(raw) > SITES_MAX:
+                return {"ok": False, "error": "bad_args"}
+            sites = [site_of(x) for x in raw]
+            if None in sites:
+                return {"ok": False, "error": "bad_site"}
+            web["sites"] = sorted(set(sites))
+        if "private" in req:
+            web["private"] = bool(req["private"])
+        if name is not None and not web["sites"] and not web["private"]:
+            s["web"]["users"].pop(name, None)
+        out = json.loads(json.dumps(s["web"]))
+        mine = (out.get("users") or {}).get(name, {"sites": [], "private": False}) if name else out
+    log("websites%s: %d blocked, private windows %s" % (" for " + name if name else "", len(mine["sites"]), "blocked" if mine["private"] else "allowed"))
+    net_sync()
+    web_sync(force=True)
+    return {"ok": True, "web": out}
 
 
 # -------------------------------------------------------------- Wi-Fi stays on
@@ -926,6 +1306,7 @@ def keep_wifi_on(strikes, now):
     if shutil.which("nmcli"):
         act("turn Wi-Fi on in NetworkManager", ["nmcli", "radio", "wifi", "on"])
     strikes[:] = [t for t in strikes if now - t < RADIO_WINDOW] + [now]
+    report(front[0]["user"] if front else None, "airplane")
     for s in front:
         notify("Airplane mode is not allowed on this account. The Wi-Fi was turned back on.", s["user"])
     if len(strikes) >= RADIO_STRIKES:
@@ -937,13 +1318,93 @@ def keep_wifi_on(strikes, now):
 
 
 def radio_loop():
-    strikes = []
+    """Looks every RADIO_TICK seconds, and at once when the kernel says a radio was switched:
+    reading /dev/rfkill gives an event for every change, so the Wi-Fi is back on within moments."""
+    strikes, fd = [], None
+    with contextlib.suppress(OSError):
+        fd = os.open("/dev/rfkill", os.O_RDONLY | os.O_NONBLOCK)
     while True:
         try:
             keep_wifi_on(strikes, time.monotonic())
         except Exception as e:
             log("keeping the Wi-Fi on failed: %r" % e)
-        time.sleep(RADIO_TICK)
+        if fd is None:
+            time.sleep(RADIO_TICK)
+            continue
+        if select.select([fd], [], [], RADIO_TICK)[0]:
+            with contextlib.suppress(OSError):
+                while os.read(fd, 64):      # the changes themselves do not matter; the state is read above
+                    pass
+
+
+# What a child tried, from NetworkManager's own record of requests it refused. The network
+# lock (debian/postinst) refuses them; this tells the parent's phone that someone tried.
+NM_TRIES = {
+    "radio-control": "wifi_off", "networking-control": "network_off", "sleep-control": "network_off",
+    "device-disconnect": "disconnect", "connection-deactivate": "disconnect", "device-delete": "disconnect",
+    "device-managed": "disconnect", "device-autoconnect": "disconnect",
+    "connection-update": "wifi_settings", "connection-update-unsaved": "wifi_settings",
+    "connection-clear-secrets": "wifi_settings", "connection-delete": "forget_network",
+    "connection-add": "other_network", "connection-add-activate": "other_network",
+    "connection-activate": "other_network",
+}
+NM_AUDIT = re.compile(r'audit: op="([^"]+)".*?\buid=(\d+) result="fail"(?: reason="([^"]*)")?')
+REPORT_QUIET = 60               # the same try by the same account is told once a minute at most
+_reported = {}
+
+
+def report(user, what):
+    """Tell the phones that `user` (None: someone at the login screen) tried `what`. Returns
+    False when the same was just told."""
+    key, now = (user, what), time.monotonic()
+    if now - _reported.get(key, -1e9) < REPORT_QUIET:
+        return False
+    _reported[key] = now
+    event_add("tamper", user=user, what=what)
+    return True
+
+
+def nm_refused(line):
+    """(account, what) for a NetworkManager log line about a request it refused to a standard
+    account, else None."""
+    m = NM_AUDIT.search(line)
+    if not m or not re.search(r"not authori[sz]ed|insufficient privileges|permission", m.group(3) or "", re.I):
+        return None
+    try:
+        p = pwd.getpwuid(int(m.group(2)))
+    except (KeyError, ValueError):
+        return None
+    u = next((u for u in human_users() if u["name"] == p.pw_name), None)
+    if not u or u["admin"]:
+        return None
+    return u["name"], NM_TRIES.get(m.group(1), "network")
+
+
+NM_NOTICE = {
+    "wifi_off": "Turning off the Wi-Fi is not allowed on this account.",
+    "network_off": "Turning off the network is not allowed on this account.",
+    "disconnect": "Disconnecting from the Wi-Fi is not allowed on this account.",
+    "wifi_settings": "Changing the Wi-Fi settings is not allowed on this account.",
+    "forget_network": "Removing a Wi-Fi network is not allowed on this account.",
+    "other_network": "Joining another network is not allowed on this account.",
+}
+
+
+def nm_loop():
+    """Follows NetworkManager's log for refused requests."""
+    while True:
+        try:
+            p = subprocess.Popen(["journalctl", "-f", "-n", "0", "-o", "cat", "-u", "NetworkManager.service"],
+                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, errors="replace")
+            for line in p.stdout:
+                hit = nm_refused(line)
+                if hit and report(*hit):
+                    notify(NM_NOTICE.get(hit[1], "Changing the network is not allowed on this account.")
+                           + " Your parent has been told.", hit[0])
+            p.wait()
+        except Exception as e:
+            log("following NetworkManager failed: %r" % e)
+        time.sleep(10)
 
 
 # -------------------------------------------------------------------- timers
@@ -998,13 +1459,189 @@ def timer_loop():
                 log("timer reached zero")
                 power("poweroff")
             continue
-        blocking = any(e.get("blocked") for e in st["net"].values())
-        if checked is None or (blocking and time.monotonic() - checked >= 30):
+        if checked is None or time.monotonic() - checked >= 30:     # also new accounts, a cable plugged in
             net_sync()
             checked = time.monotonic()
         lefts = [e["deadline"] - now for e in entries if e and e.get("deadline") is not None]
         TIMER_WAKE.wait(min(lefts + [5.0]) if lefts else 30.0)   # short ticks also catch waking from suspend
         TIMER_WAKE.clear()
+
+
+# -------------------------------------------------------------- screen-time limits
+#
+# A daily limit per account, kept on this computer so it works with the phone away. It counts the
+# time on the screen and unlocked ('used', as in screen time), plus the time the phone says the
+# same child spent today on their other accounts ('elsewhere': one limit shared by several
+# accounts or computers), against the minutes allowed plus any extra given today. When it runs
+# out: a notice, and LIMIT_GRACE seconds later the computer shuts down or the account is logged out.
+
+LIMIT_TICK = 2                  # seconds between looks while a limit is close (and between checks)
+LIMIT_GRACE = 60
+LIMIT_WAKE = threading.Event()  # a limit was changed: look now
+LIMIT_RUN = {}                  # (account, date): the warnings given and what was done today
+
+
+def limit_today(entry, today):
+    """Extra time or time elsewhere counts only on the day it was given for."""
+    return int(entry.get("seconds", 0)) if isinstance(entry, dict) and entry.get("date") == today else 0
+
+
+def limit_info(limit, seen, name, now):
+    """Where an account stands against its limit today, as the phone is told."""
+    today = kept_days(now)[0]
+    used = int(((seen["users"].get(name) or {}).get("days", {}).get(today) or {}).get("used", 0))
+    extra, other = limit_today(limit.get("extra"), today), limit_today(limit.get("elsewhere"), today)
+    total = used + other
+    return {"minutes": limit["minutes"], "action": limit["action"], "warn": bool(limit.get("warn")),
+            "tell": bool(limit.get("tell", True)), "extra": extra, "elsewhere": other, "used": total,
+            "left": max(0, limit["minutes"] * 60 + extra - total)}
+
+
+def limits_check(seen, users, now):
+    """Warns, and acts on limits that ran out. Returns True while a limit is close or running out,
+    so the next look comes sooner."""
+    with state() as st:
+        pass
+    limits = st["limits"]
+    if not limits:
+        return False
+    today = kept_days(now)[0]
+    for k in [k for k in LIMIT_RUN if k[1] != today]:
+        del LIMIT_RUN[k]
+    fast = False
+    for u in users:
+        limit, name = limits.get(u["name"]), u["name"]
+        if not limit or u["admin"]:
+            continue
+        info = limit_info(limit, seen, name, now)
+        run = LIMIT_RUN.setdefault((name, today), {"w5": False, "w1": False, "up": None, "done": False})
+        left = info["left"]
+        if left > 0:                    # within the limit, or more time was given
+            run.update(up=None, done=False, w5=run["w5"] and left <= 300, w1=run["w1"] and left <= 60)
+            if u["state"] == "active":
+                fast = fast or left <= 120
+                if info["warn"] and left <= 60 and not run["w1"]:
+                    run.update(w1=True, w5=True)
+                    notify("1 minute of screen time is left for today.", name)
+                elif info["warn"] and left <= 300 and not run["w5"]:
+                    run["w5"] = True
+                    notify("%d minutes of screen time are left for today." % ((left + 59) // 60), name)
+            continue
+        if u["state"] == "none":        # logged out: starts again if they log in again today
+            run.update(up=None, done=False)
+            continue
+        if run["up"] is None:
+            if u["state"] != "active":  # only once they are on the screen
+                continue
+            run["up"] = time.monotonic()
+            with state(write=True) as s:    # remembered across a restart: the second time today is "again"
+                mine = s["limits"].get(name)
+                times = limit_today(mine.get("ended"), today) + 1 if mine else 1
+                if mine:
+                    mine["ended"] = {"date": today, "seconds": times}
+            notify("Your screen time for today is used up. %s in 1 minute." % (
+                "The computer shuts down" if limit["action"] == "poweroff" else "You will be logged out"), name)
+            event_add("limit", user=name, minutes=limit["minutes"], used=info["used"], action=limit["action"],
+                      tell=info["tell"], again=times > 1)
+            fast = True
+        elif not run["done"]:
+            fast = True
+            if time.monotonic() - run["up"] >= LIMIT_GRACE:
+                # Shutting down would also end whoever else is on the screen now; log out only this account then.
+                if limit["action"] == "poweroff" and not any(o["state"] == "active" and o["name"] != name for o in users):
+                    log("the screen time of %s is used up" % name)
+                    ok = power("poweroff")
+                else:
+                    ok = act("log out %s: screen time used up" % name, ["loginctl", "terminate-user", name])
+                if ok:
+                    run["done"] = True
+                else:                   # try again after another grace
+                    log("could not end the session of %s; trying again" % name)
+                    run["up"] = time.monotonic()
+    return fast
+
+
+def limit_account(req):
+    """The account a limit op is about, or the error to answer with."""
+    u = next((u for u in all_users() if u["name"] == req.get("user")), None)
+    if not u:
+        return None, {"ok": False, "error": "bad_user"}
+    if u["admin"]:
+        return None, {"ok": False, "error": "is_admin"}
+    return u, None
+
+
+def whole(n, low, high):
+    return isinstance(n, int) and not isinstance(n, bool) and low <= n <= high
+
+
+def op_limit_set(req, st):
+    u, error = limit_account(req)
+    if error:
+        return error
+    minutes, action = req.get("minutes"), req.get("action", "poweroff")
+    if not whole(minutes, 1, 1440) or action not in ("poweroff", "logout"):
+        return {"ok": False, "error": "bad_args"}
+    with state(write=True) as s:
+        limit = dict(s["limits"].get(u["name"]) or {}, minutes=minutes, action=action,
+                     warn=bool(req.get("warn")), tell=bool(req.get("tell", True)))
+        s["limits"][u["name"]] = limit
+    log("screen-time limit for %s: %s a day, then %s" % (u["name"], human(minutes * 60), action))
+    LIMIT_WAKE.set()
+    return {"ok": True, "limit": limit_info(limit, usage_look(), u["name"], time.time())}
+
+
+def op_limit_clear(req, st):
+    if not any(u["name"] == req.get("user") for u in all_users()):
+        return {"ok": False, "error": "bad_user"}
+    with state(write=True) as s:
+        s["limits"].pop(req["user"], None)
+    log("screen-time limit for %s: none" % req["user"])
+    LIMIT_WAKE.set()
+    return {"ok": True, "limit": None}
+
+
+def op_limit_extra(req, st):
+    """More time today on top of the limit."""
+    u, error = limit_account(req)
+    if error:
+        return error
+    if not whole(req.get("minutes"), 1, 720):
+        return {"ok": False, "error": "bad_args"}
+    now = time.time()
+    today = kept_days(now)[0]
+    with state(write=True) as s:
+        limit = s["limits"].get(u["name"])
+        if limit:
+            limit["extra"] = {"date": today, "seconds": limit_today(limit.get("extra"), today) + req["minutes"] * 60}
+    if not limit:
+        return {"ok": False, "error": "no_limit"}
+    log("%s more minutes for %s today" % (req["minutes"], u["name"]))
+    LIMIT_WAKE.set()
+    info = limit_info(limit, usage_look(), u["name"], now)
+    notify("Your parent gave you %s more today. %s left." % (human(req["minutes"] * 60), human(info["left"])), u["name"])
+    return {"ok": True, "limit": info}
+
+
+def op_limit_elsewhere(req, st):
+    """The time each child spent today on their other accounts (on this computer or others),
+    for a limit shared between accounts. Only counts on `date`, the day it is for."""
+    date, spent = req.get("date"), req.get("users")
+    if not isinstance(date, str) or not isinstance(spent, dict) or not all(whole(v, 0, 86400) for v in spent.values()):
+        return {"ok": False, "error": "bad_args"}
+    if date != kept_days(time.time())[0]:
+        return {"ok": True, "applied": False}       # a day that is over, or not begun here yet
+    changed = False
+    with state() as s:
+        changed = any(name in s["limits"] and limit_today(s["limits"][name].get("elsewhere"), date) != spent[name]
+                      for name in spent)
+    if changed:
+        with state(write=True) as s:
+            for name, seconds in spent.items():
+                if name in s["limits"]:
+                    s["limits"][name]["elsewhere"] = {"date": date, "seconds": seconds}
+        LIMIT_WAKE.set()
+    return {"ok": True, "applied": True}
 
 
 def demo():
@@ -1048,16 +1685,23 @@ def op_status(req, st):
         u.pop("since", None)
         if u["state"] != "none" and mine["logins"] and mine["logins"][-1][1] is None:
             u["since"] = mine["logins"][-1][0]
+            how = how_of(u["name"], u["since"])
+            if how:
+                u["how"] = how
         u["today"] = int(mine["days"].get(kept_days(now)[0], {}).get("used", 0))
         e = st["net"].get(u["name"]) or {}
         u["net"] = "off" if e.get("blocked") and not u["admin"] else "on"
         if e.get("deadline") is not None and not u["admin"]:
             u["net_timer"] = {"remaining": max(0, int(e["deadline"] - now)), "warn": bool(e.get("warn"))}
+        limit = st["limits"].get(u["name"])
+        if limit and not u["admin"]:
+            u["limit"] = limit_info(limit, seen, u["name"], now)
     t = st["timer"]
     timer = {"remaining": max(0, int(t["deadline"] - now)), "warn": bool(t.get("warn"))} if t else None
-    caps = ["seconds", "browsers", "usage"] + (["net"] if net_supported() else []) + (["login"] if login_hook() else [])
-    return {"ok": True, "id": st["id"], "name": host_name(), "os": os_name(),
-            "users": users, "timer": timer, "caps": caps, "dry": DRY}
+    caps = (["seconds", "browsers", "usage", "watch", "limits", "web"] + (["net"] if net_supported() else [])
+            + (["login"] if login_hook() else []))
+    return {"ok": True, "id": st["id"], "name": host_name(), "os": os_name(), "date": kept_days(now)[0],
+            "users": users, "timer": timer, "caps": caps, "dry": DRY, "web": st["web"]}
 
 
 def find_user(req):
@@ -1247,6 +1891,7 @@ def cmd_pam_remember():
     if os.environ.get("PAM_TYPE") != "auth" or not find_user({"user": name}):
         return 1
     secret = sys.stdin.buffer.read(4096).split(b"\0")[0].decode(errors="surrogateescape")
+    how_mark(name, "password")
     if secret:
         passwords(lambda known: known.update({name: secret}))
     return 0
@@ -1317,6 +1962,7 @@ def cmd_pam_login():
     if expires < time.time():
         return 1
     log("let %s in without a password (approved from a phone)" % name)
+    how_mark(name, "phone")
     return 0
 
 
@@ -1374,7 +2020,8 @@ def op_forget(req, st):
 OPS = {"status": op_status, "apps": op_apps, "browsers": op_browsers, "usage": op_usage, "poweroff": op_power, "reboot": op_power,
        "timer_set": op_timer_set, "timer_cancel": op_timer_cancel, "lock": op_lock,
        "logout": op_logout, "login": op_login, "net_set": op_net_set, "net_clear": op_net_clear,
-       "forget": op_forget}
+       "forget": op_forget, "watch": op_watch, "limit_set": op_limit_set, "web_set": op_web_set, "limit_clear": op_limit_clear,
+       "limit_extra": op_limit_extra, "limit_elsewhere": op_limit_elsewhere}
 
 
 # ---------------------------------------------------------------------- HTTP
@@ -1514,16 +2161,46 @@ class Server(ThreadingHTTPServer):
                     self.busy.pop(client_address[0], None)
 
 
+def sleep_loop():
+    """Tells the phones the moment the computer is about to sleep, when logind announces it:
+    NetworkManager takes the Wi-Fi down for sleep at the same signal, before the system-sleep
+    hook (debian/curfew-sleep) runs."""
+    while True:
+        try:
+            p = subprocess.Popen(["gdbus", "monitor", "--system", "--dest", "org.freedesktop.login1",
+                                  "--object-path", "/org/freedesktop/login1"],
+                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, errors="replace")
+            for line in p.stdout:
+                if "PrepareForSleep" in line:
+                    say_bye("sleep" if "(true" in line else None)
+            p.wait()
+        except Exception as e:
+            log("following logind failed: %r" % e)
+        time.sleep(10)
+
+
 def serve():
+    # first of all: the default for these signals is to end the program
+    signal.signal(signal.SIGUSR1, lambda *_: (say_bye("sleep"), time.sleep(0.3)))
+    signal.signal(signal.SIGUSR2, lambda *_: say_bye(None))
     srv = Server(("0.0.0.0", PORT), Handler)
     with state() as st:
         log("Curfew agent %s listening on port %d" % (st["id"], PORT))
     threading.Thread(target=timer_loop, daemon=True).start()
     threading.Thread(target=usage_loop, daemon=True).start()
+    threading.Thread(target=web_loop, daemon=True).start()
     if not DRY:
         threading.Thread(target=radio_loop, daemon=True).start()
+        if shutil.which("journalctl"):
+            threading.Thread(target=nm_loop, daemon=True).start()
+        if shutil.which("gdbus"):
+            threading.Thread(target=sleep_loop, daemon=True).start()
+    else:
+        threading.Thread(target=fake_event_loop, daemon=True).start()
 
     def stop(*_):
+        say_bye(going_down())           # phones that watch show it as off at once
+        time.sleep(0.5)                 # for those answers to go out
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, stop)     # so that the screen-time totals are written before it ends
     try:
@@ -1761,6 +2438,9 @@ def cmd_status():
     for u in s["users"]:
         nt = u.get("net_timer")
         net = "internet off" if u["net"] == "off" else "internet off in %d min %02d s" % divmod(nt["remaining"], 60) if nt else ""
+        lim = u.get("limit")
+        if lim:
+            net = (net + ", " if net else "") + "limit %s a day, %s left today" % (human(lim["minutes"] * 60), human(lim["left"]))
         print("  %-20s %-9s %-10s %s" % (u["name"], "admin" if u["admin"] else "standard", u["state"].replace("_", " "), net))
     return 0
 
@@ -1775,7 +2455,7 @@ USAGE = """Curfew - control this computer from a paired phone.
 
 
 def main(argv):
-    global DRY, PORT, STATE_DIR, RUN_DIR
+    global DRY, PORT, STATE_DIR, RUN_DIR, LIMIT_GRACE
     if argv[:1] == ["keyring"] and len(argv) == 2:      # runs as the account, not as root
         return cmd_keyring(argv[1])
     args = [a for a in argv if a != "--dry-run"]
@@ -1783,6 +2463,7 @@ def main(argv):
         DRY, PORT = True, int(os.environ.get("CURFEW_PORT", "8787"))
         STATE_DIR = os.environ.get("CURFEW_STATE") or os.path.expanduser("~/.local/state/curfew-dryrun")
         RUN_DIR = os.path.join(STATE_DIR, "run")
+        LIMIT_GRACE = float(os.environ.get("CURFEW_LIMIT_GRACE", LIMIT_GRACE))     # tests do not wait a minute
     os.umask(0o077)
     cmd = args[0] if args else "help"
     if cmd in ("help", "-h", "--help"):
@@ -1809,6 +2490,8 @@ def main(argv):
         return cmd_unpair(" ".join(args[1:]))
     if cmd == "status":
         return cmd_status()
+    if cmd == "fake" and DRY:
+        return cmd_fake(args[1:])
     if cmd == "apps" and len(args) == 2:       # debugging aid: what the phone would see
         u = find_user({"user": args[1]})
         print(json.dumps(open_apps(u), indent=1) if u else "no such user")

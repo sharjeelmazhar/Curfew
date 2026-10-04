@@ -29,7 +29,29 @@ data class Goodbye(val id: String, val phoneId: String, val key: String, val hos
 
 const val GOODBYE_GIVE_UP_MS = 30L * 24 * 3600 * 1000
 
-data class StoreData(val computers: List<Computer> = emptyList(), val goodbyes: List<Goodbye> = emptyList()) {
+/** One account on one computer. */
+data class Account(val computerId: String, val user: String)
+
+/** One daily limit shared by several accounts, perhaps on several computers: the same child's
+ *  time on all of them counts together. Kept on the phone; each computer is given the limit and
+ *  told the time spent on the others (see [elsewhere]). */
+data class SharedLimit(
+    val id: String, val members: Set<Account>, val minutes: Int, val action: String, val warn: Boolean, val tell: Boolean,
+)
+
+/** Which notifications the parent wants. */
+/** What to be told of, and [lock]: whether the app asks for the fingerprint each time it opens. */
+data class AlertPrefs(val logins: Boolean = true, val tamper: Boolean = true, val limits: Boolean = true, val lock: Boolean = true)
+
+/** [pending]: accounts in a shared limit whose computer has not been given it yet (it was off).
+ *  [released]: accounts this phone took out of a shared limit, whose computer still counts the
+ *  others' time until it is told otherwise. Only these are corrected by the phone, so two phones
+ *  paired to the same computer never undo each other. */
+data class StoreData(
+    val computers: List<Computer> = emptyList(), val goodbyes: List<Goodbye> = emptyList(),
+    val shared: List<SharedLimit> = emptyList(), val prefs: AlertPrefs = AlertPrefs(),
+    val pending: Set<Account> = emptySet(), val released: Set<Account> = emptySet(),
+) {
 
     fun toJson(): String = JSONObject()
         .put("computers", JSONArray(computers.map {
@@ -41,7 +63,41 @@ data class StoreData(val computers: List<Computer> = emptyList(), val goodbyes: 
             JSONObject().put("id", it.id).put("phone", it.phoneId).put("key", it.key)
                 .put("host", it.host).put("port", it.port).put("since", it.since)
         }))
+        .put("shared", JSONArray(shared.map { g ->
+            JSONObject().put("id", g.id).put("minutes", g.minutes).put("action", g.action).put("warn", g.warn).put("tell", g.tell)
+                .put("members", JSONArray(g.members.map { JSONArray().put(it.computerId).put(it.user) }))
+        }))
+        .put("prefs", JSONObject().put("logins", prefs.logins).put("tamper", prefs.tamper).put("limits", prefs.limits).put("lock", prefs.lock))
+        .put("pending", accountsJson(pending)).put("released", accountsJson(released))
         .toString()
+
+    private fun accountsJson(a: Set<Account>) = JSONArray(a.map { JSONArray().put(it.computerId).put(it.user) })
+
+    /** The shared limits are now [next]: whoever left one is [released], whoever is in one is not. */
+    private fun regroup(next: List<SharedLimit>): StoreData {
+        val before = shared.flatMap { it.members }.toSet()
+        val after = next.flatMap { it.members }.toSet()
+        return copy(shared = next, released = released - after + (before - after), pending = pending.filter { it in after }.toSet())
+    }
+
+    /** The shared limit [account] belongs to, if any. */
+    fun sharedOf(account: Account) = shared.find { account in it.members }
+
+    /** [account] gets a limit counted together with [others] (none: a limit of its own, kept on
+     *  the computer only). The accounts leave any shared limit they were in; one left alone there
+     *  is no longer shared. */
+    fun withShared(account: Account, others: Set<Account>, minutes: Int, action: String, warn: Boolean, tell: Boolean, id: String): StoreData {
+        val all = others + account
+        val rest = shared.map { it.copy(members = it.members - all) }.filter { it.members.size > 1 }
+        return regroup(if (others.isEmpty()) rest else rest + SharedLimit(id, all, minutes, action, warn, tell))
+    }
+
+    fun withoutShared(account: Account) =
+        regroup(shared.map { it.copy(members = it.members - account) }.filter { it.members.size > 1 })
+
+    fun withPending(accounts: Set<Account>) = copy(pending = pending + accounts.filter { a -> shared.any { a in it.members } })
+    fun withoutPending(a: Account) = copy(pending = pending - a)
+    fun withoutReleased(a: Account) = copy(released = released - a)
 
     /** Adds a freshly paired computer. Pairing the same computer again replaces the old
      *  entry and queues a goodbye for the old key. */
@@ -57,7 +113,11 @@ data class StoreData(val computers: List<Computer> = emptyList(), val goodbyes: 
     /** Removes a computer from the list at once and remembers to tell it. */
     fun withRemoved(id: String, now: Long): StoreData {
         val c = computers.find { it.id == id } ?: return this
-        return copy(computers = computers - c, goodbyes = goodbyes + Goodbye(c.id, c.phoneId, c.key, c.host, c.port, now))
+        return regroup(shared.map { g -> g.copy(members = g.members.filter { it.computerId != id }.toSet()) }.filter { it.members.size > 1 })
+            .let { s -> s.copy(
+                computers = computers - c, goodbyes = goodbyes + Goodbye(c.id, c.phoneId, c.key, c.host, c.port, now),
+                released = s.released.filter { it.computerId != id }.toSet(), pending = s.pending.filter { it.computerId != id }.toSet(),
+            ) }
     }
 
     /** A blank [alias] goes back to the computer's own name. */
@@ -76,6 +136,11 @@ data class StoreData(val computers: List<Computer> = emptyList(), val goodbyes: 
             val j = JSONObject(text ?: "{}")
             val cs = j.optJSONArray("computers") ?: JSONArray()
             val gs = j.optJSONArray("goodbyes") ?: JSONArray()
+            val sh = j.optJSONArray("shared") ?: JSONArray()
+            val pr = j.optJSONObject("prefs") ?: JSONObject()
+            fun accounts(k: String) = (j.optJSONArray(k) ?: JSONArray()).let { a ->
+                (0 until a.length()).mapNotNull { a.optJSONArray(it) }.map { Account(it.optString(0), it.optString(1)) }.toSet()
+            }
             StoreData(
                 (0 until cs.length()).map { cs.getJSONObject(it) }.map {
                     val users = it.optJSONObject("users") ?: JSONObject()
@@ -87,6 +152,15 @@ data class StoreData(val computers: List<Computer> = emptyList(), val goodbyes: 
                     Goodbye(it.getString("id"), it.getString("phone"), it.getString("key"),
                         it.getString("host"), it.getInt("port"), it.optLong("since"))
                 },
+                (0 until sh.length()).mapNotNull { sh.optJSONObject(it) }.map { g ->
+                    val ms = g.optJSONArray("members") ?: JSONArray()
+                    SharedLimit(
+                        g.optString("id"), (0 until ms.length()).mapNotNull { ms.optJSONArray(it) }.map { Account(it.optString(0), it.optString(1)) }.toSet(),
+                        g.optInt("minutes"), g.optString("action", "poweroff"), g.optBoolean("warn"), g.optBoolean("tell", true),
+                    )
+                }.filter { it.members.size > 1 && it.minutes > 0 },
+                AlertPrefs(pr.optBoolean("logins", true), pr.optBoolean("tamper", true), pr.optBoolean("limits", true), pr.optBoolean("lock", true)),
+                accounts("pending"), accounts("released"),
             )
         } catch (e: Exception) {
             StoreData()
@@ -113,15 +187,34 @@ enum class UserState(val label: String) {
 data class UserInfo(
     val name: String, val full: String, val admin: Boolean, val state: UserState,
     val netOff: Boolean = false, val netSeconds: Int? = null,
-    val since: Long? = null, val todaySeconds: Int? = null,
+    val since: Long? = null, val todaySeconds: Int? = null, val limit: LimitInfo? = null, val how: String = "",
 ) {
     val display get() = full.ifBlank { name }
 }
 
-/** [caps]: what the Curfew on that computer can do ("seconds", "net", "login"); an older one says nothing. */
+/** A daily screen-time limit as the computer keeps it: [minutes] a day, then [action] ("poweroff" or
+ *  "logout"). [used] seconds today (with [elsewhere], the time on the child's other accounts),
+ *  [extra] seconds given today on top, [left] seconds left today. */
+data class LimitInfo(
+    val minutes: Int, val action: String, val warn: Boolean, val tell: Boolean,
+    val extra: Int = 0, val elsewhere: Int = 0, val used: Int = 0, val left: Int = minutes * 60,
+) {
+    val allowed get() = minutes * 60 + extra
+    val up get() = left <= 0
+}
+
+fun parseLimit(j: JSONObject?): LimitInfo? = j?.let {
+    LimitInfo(
+        it.optInt("minutes"), it.optString("action", "poweroff"), it.optBoolean("warn"), it.optBoolean("tell", true),
+        it.optInt("extra"), it.optInt("elsewhere"), it.optInt("used"), it.optInt("left"),
+    )
+}?.takeIf { it.minutes > 0 }
+
+/** [caps]: what the Curfew on that computer can do ("seconds", "net", "login"); an older one says nothing.
+ *  [date] is the computer's today ("2026-10-03"), empty from an older one. */
 data class Status(
     val name: String, val os: String, val users: List<UserInfo>, val timerSeconds: Int?, val warn: Boolean,
-    val caps: Set<String> = emptySet(),
+    val caps: Set<String> = emptySet(), val date: String = "", val web: WebRules = WebRules(),
 ) {
     /** One line for the home card: who is in front of it, and who else is still logged in. */
     fun headline(nameOf: (UserInfo) -> String = { it.display }): String {
@@ -175,12 +268,43 @@ fun parseStatus(j: JSONObject): Status {
         users = (0 until us.length()).mapNotNull { us.optJSONObject(it) }.filter { it.optString("name").isNotEmpty() }.map {
             UserInfo(it.optString("name"), it.optString("full"), it.optBoolean("admin"), UserState.of(it.optString("state")),
                 it.optString("net") == "off", it.optJSONObject("net_timer")?.optInt("remaining"),
-                it.optLong("since").takeIf { t -> t > 0 }, if (it.has("today")) it.optInt("today") else null)
+                it.optLong("since").takeIf { t -> t > 0 }, if (it.has("today")) it.optInt("today") else null,
+                parseLimit(it.optJSONObject("limit")), it.optString("how"))
         },
         timerSeconds = t?.optInt("remaining"),
         warn = t?.optBoolean("warn") ?: false,
         caps = (j.optJSONArray("caps") ?: JSONArray()).let { c -> (0 until c.length()).map { c.optString(it) }.toSet() },
+        date = j.optString("date"),
+        web = j.optJSONObject("web")?.let { w ->
+            fun rules(o: JSONObject) = WebRules((o.optJSONArray("sites") ?: JSONArray()).let { a -> (0 until a.length()).map { a.optString(it) } }, o.optBoolean("private"))
+            val us = w.optJSONObject("users") ?: JSONObject()
+            rules(w).copy(users = us.keys().asSequence().mapNotNull { k -> us.optJSONObject(k)?.let { k to rules(it) } }.toMap())
+        } ?: WebRules(),
     )
+}
+
+/** The websites children cannot open on a computer, and whether private windows are blocked there;
+ *  [users]: each account's own rules, on top of these. */
+data class WebRules(val sites: List<String> = emptyList(), val private: Boolean = false, val users: Map<String, WebRules> = emptyMap()) {
+    fun of(user: String?): WebRules = if (user == null) this else users[user] ?: WebRules()
+}
+
+private val SITE = Regex("^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z][a-z0-9-]{0,62}$")
+
+/** What the parent typed, as a site: "https://www.YouTube.com/watch?v=1" -> "youtube.com"; null if it is not one. */
+fun siteOf(text: String): String? {
+    var t = text.trim().lowercase().replace(Regex("^[a-z][a-z0-9+.-]*://"), "")
+    t = t.split('/', '?', '#', ':').first().trim('.').replace(Regex("^www\\d*\\."), "")
+    return t.takeIf { SITE.matches(it) }
+}
+
+/** The main site of a page, for blocking it with everything under it: "m.youtube.com" -> "youtube.com",
+ *  "news.bbc.co.uk" -> "bbc.co.uk". */
+fun mainSite(url: String): String? {
+    val host = siteOf(url) ?: return null
+    val parts = host.split('.')
+    val country = parts.last().length == 2 && parts.size >= 3 && parts[parts.size - 2] in setOf("co", "com", "org", "net", "gov", "edu", "ac", "gob", "or", "ne")
+    return parts.takeLast(if (country) 3 else 2).joinToString(".")
 }
 
 fun parseApps(j: JSONObject): List<AppInfo> {
@@ -230,7 +354,7 @@ data class DayUse(val date: String, val used: Int, val on: Int)
 /** One login, from [start] to [end] (unix seconds); [end] is null while still logged in. */
 data class LoginSpan(val start: Long, val end: Long?)
 
-/** Screen time of one account: [days] is today then yesterday, [logins] newest first. */
+/** Screen time of one account: [days] is today then the days before (up to 7), [logins] newest first. */
 data class UserUsage(
     val name: String, val state: UserState, val bootUsed: Int, val days: List<DayUse>, val logins: List<LoginSpan>,
 ) {
@@ -258,12 +382,12 @@ fun parseUsage(j: JSONObject): Usage {
 }
 
 /** One login as the phone sees it: which account, and when it began (unix seconds). */
-data class LoginSeen(val user: String, val start: Long)
+data class LoginSeen(val user: String, val start: Long, val how: String = "")
 
 /** The logins in [usage] (all of them) or [status] (only the current ones) as [LoginSeen]. */
 fun loginsOf(usage: Usage): List<LoginSeen> = usage.users.flatMap { u -> u.logins.map { LoginSeen(u.name, it.start) } }
 fun loginsOf(status: Status): List<LoginSeen> =
-    status.users.mapNotNull { u -> u.since?.takeIf { u.state != UserState.NONE }?.let { LoginSeen(u.name, it) } }
+    status.users.mapNotNull { u -> u.since?.takeIf { u.state != UserState.NONE }?.let { LoginSeen(u.name, it, u.how) } }
 
 /** How long the phone remembers which logins it already announced. */
 const val LOGINS_KEPT_SECONDS = 3L * 86400
@@ -276,6 +400,8 @@ const val LOGINS_KEPT_SECONDS = 3L * 86400
 data class Memory(
     val status: String? = null, val statusAt: Long = 0, val usage: String? = null, val usageAt: Long = 0,
     val watchFrom: Long = 0, val announced: Set<LoginSeen> = emptySet(), val approved: Map<String, Long> = emptyMap(),
+    /** Where this phone is in the computer's numbered events (see the "watch" op in API.md). */
+    val epoch: String = "", val seq: Int = 0,
 ) {
     /** The logins among [current] to tell the parent about. Not one from before the phone began
      *  watching, not one already told, and not one that this phone itself let in a moment before. */
@@ -293,7 +419,7 @@ data class Memory(
     )
 
     fun toJson(): JSONObject = JSONObject().put("status", status).put("statusAt", statusAt).put("usage", usage).put("usageAt", usageAt)
-        .put("watchFrom", watchFrom).put("approved", JSONObject(approved))
+        .put("watchFrom", watchFrom).put("approved", JSONObject(approved)).put("epoch", epoch).put("seq", seq)
         .put("announced", JSONArray(announced.map { JSONArray().put(it.user).put(it.start) }))
 
     companion object {
@@ -306,6 +432,7 @@ data class Memory(
                 j.optLong("watchFrom"),
                 (0 until an.length()).mapNotNull { an.optJSONArray(it) }.map { LoginSeen(it.optString(0), it.optLong(1)) }.toSet(),
                 ap.keys().asSequence().associateWith { ap.optLong(it) },
+                j.optString("epoch"), j.optInt("seq"),
             )
         }
     }
@@ -321,8 +448,8 @@ fun memoriesFromJson(text: String?): Map<String, Memory> = try {
 }
 
 /** The words of a login notification: "Ali logged in" and "On kids-laptop at 8:55 PM". */
-fun loginAlert(name: String, computer: String, start: Long, now: Long, zone: ZoneId, h24: Boolean): Pair<String, String> =
-    "$name logged in" to ("On $computer at " + formatSince(start, now, zone, h24))
+fun loginAlert(name: String, computer: String, how: String = ""): Pair<String, String> =
+    "$name logged in" to computer + when (how) { "password" -> " · with the password"; "phone" -> " · from your phone"; else -> "" }
 
 /** A day of screen time named for the parent: "Today", "Yesterday", or its date when older. */
 fun dayLabel(date: String, today: LocalDate): String = when (runCatching { LocalDate.parse(date) }.getOrNull()) {
@@ -353,11 +480,47 @@ fun formatSince(since: Long, now: Long, zone: ZoneId, h24: Boolean): String {
     return if (day(since) == day(now)) formatClock(since, zone, h24) else formatMoment(since, zone, h24)
 }
 
-/** The line under an account's name: since when it is logged in and how long it was used today. */
-fun useLine(u: UserInfo, now: Long, zone: ZoneId, h24: Boolean): String = listOfNotNull(
+/** The lines under an account's name: since when it is logged in, and how long it was used today
+ *  (against its limit, if it has one). Each on a line of its own. */
+fun useLines(u: UserInfo, now: Long, zone: ZoneId, h24: Boolean): List<String> = listOfNotNull(
     u.since?.takeIf { u.state != UserState.NONE }?.let { "Logged in since " + formatSince(it, now, zone, h24) },
-    u.todaySeconds?.takeIf { it >= 60 }?.let { "Used " + formatDuration(it.toLong()) + " today" },
-).joinToString(" · ")
+    u.limit?.let(::limitLine) ?: u.todaySeconds?.takeIf { it >= 60 }?.let { "Used " + formatDuration(it.toLong()) + " today" },
+)
+
+/** "Used 35 min of 1 h today", or "Time is up for today" once it ran out. */
+fun limitLine(l: LimitInfo): String =
+    if (l.up) "Time is up for today" else "Used ${formatDuration(l.used.toLong())} of ${formatDuration(l.allowed.toLong())} today"
+
+/** "1 h a day", "1 h 30 min a day". */
+fun limitTitle(minutes: Int) = formatMinutes(minutes) + " a day"
+
+/** What happens when a limit runs out, in words. */
+fun limitAction(action: String) = if (action == "logout") "They are logged out" else "The computer shuts down"
+
+/** The daily limits offered with one tap, in minutes, and the stops of the custom slider. */
+val LIMIT_PRESETS = listOf(30, 60, 90, 120, 180)
+val LIMIT_STEPS = (1..48).map { it * 15 }
+
+/** An account's state as last seen, for a computer that cannot be reached now: never "in use right now". */
+fun lastSeenState(s: UserState): String = when (s) {
+    UserState.ACTIVE -> "Was in use when last seen"
+    UserState.LOCKED -> "Screen was locked when last seen"
+    UserState.LOGGED_IN -> "Was logged in when last seen"
+    UserState.NONE -> "Not logged in when last seen"
+}
+
+/** For each account of [group] whose computer's status is known: the seconds the same child
+ *  spent today on the group's other accounts. A computer's time counts only when its day
+ *  ([Status.date]) is the same as the day of the computer it is counted for. */
+fun elsewhere(group: SharedLimit, statuses: Map<String, Status>): Map<Account, Int> =
+    group.members.filter { statuses[it.computerId] != null }.associateWith { m ->
+        val date = statuses.getValue(m.computerId).date
+        (group.members - m).sumOf { o ->
+            val st = statuses[o.computerId]
+            if (st == null || date.isEmpty() || st.date != date) 0
+            else st.users.find { it.name == o.user }?.todaySeconds ?: 0
+        }
+    }
 
 /** When a page was last seen, in words: "Just now", "7 min ago", "3 h ago", "2 days ago". */
 fun formatWhen(whenSeconds: Long, nowSeconds: Long): String {
@@ -372,12 +535,23 @@ fun formatWhen(whenSeconds: Long, nowSeconds: Long): String {
 }
 
 /** How the phone currently sees a computer. */
-enum class Link { CHECKING, ON, OFF, NOT_RUNNING, NO_WIFI, OTHER_WIFI, NOT_RECOGNISED }
+enum class Link { CHECKING, ON, OFF, SHUT_DOWN, ASLEEP, RESTARTING, NOT_RUNNING, NO_WIFI, OTHER_WIFI, NOT_RECOGNISED }
+
+/** What a computer said as it went away (the "bye" of a watch answer). */
+fun byeLink(bye: String): Link? = when (bye) {
+    "shutdown" -> Link.SHUT_DOWN
+    "sleep" -> Link.ASLEEP
+    "reboot" -> Link.RESTARTING
+    else -> null            // only Curfew restarted there: back in a moment
+}
 
 fun cardLine(link: Link, status: Status?, nameOf: (UserInfo) -> String = { it.display }): String = when (link) {
     Link.CHECKING -> "Checking…"
     Link.ON -> status?.headline(nameOf) ?: "On"
     Link.OFF -> "Off"
+    Link.SHUT_DOWN -> "Shut down"
+    Link.ASLEEP -> "Asleep"
+    Link.RESTARTING -> "Restarting…"
     Link.NOT_RUNNING -> "On, but Curfew is not running on it"
     Link.NO_WIFI -> "This phone is not on Wi-Fi"
     Link.OTHER_WIFI -> "This phone is not on the home Wi-Fi"
@@ -386,6 +560,9 @@ fun cardLine(link: Link, status: Status?, nameOf: (UserInfo) -> String = { it.di
 
 fun linkExplanation(link: Link): String = when (link) {
     Link.OFF -> "The computer is shut down, asleep or not connected to the Wi-Fi. This page updates by itself when it comes back."
+    Link.SHUT_DOWN -> "The computer was shut down. This page updates by itself when it is turned on again."
+    Link.ASLEEP -> "The computer went to sleep. This page updates by itself when it wakes up."
+    Link.RESTARTING -> "The computer is restarting. It is usually back within a minute or two."
     Link.NOT_RUNNING -> "The computer is on, but the Curfew service on it is not answering. Restarting the computer usually fixes it."
     Link.NO_WIFI -> "Curfew only works over the home Wi-Fi. Turn Wi-Fi on to see and control this computer."
     Link.OTHER_WIFI -> "This phone is connected to a different network. Curfew works only when the phone and the computer are on the same home Wi-Fi."
@@ -455,9 +632,94 @@ fun formatAge(seconds: Long): String = when {
 
 fun errorText(error: String): String = when (error) {
     "not_logged_in" -> "That account is not logged in"
+    "bad_site" -> "That is not a website address"
     "bad_user" -> "That account no longer exists"
-    "is_admin" -> "The internet is never turned off for an admin account"
+    "is_admin" -> "That cannot be done for an admin account"
+    "no_limit" -> "That account has no daily limit"
     "unsupported" -> "That computer cannot do this"
     "bad_op", "bad_args" -> "Curfew on that computer is too old for this. Update it there: sudo apt update && sudo apt upgrade"
     else -> "The computer could not do that"
+}
+
+/** Something a computer told the phone as it happened (see "watch" in API.md). [user] is null for
+ *  someone at the login screen. */
+data class AgentEvent(
+    val seq: Int, val time: Long, val type: String, val user: String?, val start: Long = 0, val what: String = "",
+    val minutes: Int = 0, val used: Int = 0, val action: String = "", val tell: Boolean = true, val again: Boolean = false, val how: String = "",
+)
+
+/** A watch answer: events after the phone's position, a "bye" when the computer is going away
+ *  right now, and the status (null with a bye). */
+data class WatchReply(val epoch: String, val seq: Int, val events: List<AgentEvent>, val bye: String?, val status: JSONObject?)
+
+fun parseWatch(j: JSONObject): WatchReply {
+    val es = j.optJSONArray("events") ?: JSONArray()
+    fun JSONObject.text(k: String) = if (isNull(k)) null else optString(k)
+    return WatchReply(
+        j.optString("epoch"), j.optInt("seq"),
+        (0 until es.length()).mapNotNull { es.optJSONObject(it) }.map {
+            AgentEvent(
+                it.optInt("seq"), it.optLong("time"), it.optString("type"), it.text("user"), it.optLong("start"), it.optString("what"),
+                it.optInt("minutes"), it.optInt("used"), it.optString("action"), it.optBoolean("tell", true), it.optBoolean("again"), it.optString("how"),
+            )
+        },
+        j.text("bye")?.takeIf { it.isNotEmpty() }, j.optJSONObject("status"),
+    )
+}
+
+enum class AlertKind { LOGIN, TAMPER, LIMIT }
+
+/** One notification, kept in the app's list of notifications. [at] is unix seconds; [user] is the
+ *  account it is about (null: someone at the login screen). */
+data class AlertEntry(
+    val id: String, val computerId: String, val user: String?, val kind: AlertKind, val at: Long,
+    val title: String, val text: String, val read: Boolean = false,
+)
+
+const val ALERTS_KEPT = 300
+const val ALERTS_SECONDS = 30L * 86400
+
+/** The list as kept: newest first, without old or repeated ones. */
+fun keepAlerts(list: List<AlertEntry>, now: Long): List<AlertEntry> =
+    list.distinctBy { it.id }.filter { it.at > now - ALERTS_SECONDS }.sortedByDescending { it.at }.take(ALERTS_KEPT)
+
+fun alertsToJson(list: List<AlertEntry>): String = JSONArray(list.map {
+    JSONObject().put("id", it.id).put("computer", it.computerId).put("user", it.user ?: JSONObject.NULL).put("kind", it.kind.name)
+        .put("at", it.at).put("title", it.title).put("text", it.text).put("read", it.read)
+}).toString()
+
+fun alertsFromJson(text: String?): List<AlertEntry> = try {
+    val a = JSONArray(text ?: "[]")
+    (0 until a.length()).mapNotNull { a.optJSONObject(it) }.mapNotNull {
+        val kind = runCatching { AlertKind.valueOf(it.optString("kind")) }.getOrNull() ?: return@mapNotNull null
+        AlertEntry(
+            it.optString("id"), it.optString("computer"), if (it.isNull("user")) null else it.optString("user"), kind,
+            it.optLong("at"), it.optString("title"), it.optString("text"), it.optBoolean("read"),
+        )
+    }
+} catch (e: Exception) {
+    emptyList()
+}
+
+/** "Ali tried to turn off the Wi-Fi" and "On kids-laptop at 8:55 PM. It was not allowed." */
+fun tamperAlert(name: String?, what: String, computer: String, at: Long, now: Long, zone: ZoneId, h24: Boolean): Pair<String, String> {
+    val tried = when (what) {
+        "airplane" -> "turn on airplane mode"
+        "wifi_off" -> "turn off the Wi-Fi"
+        "network_off" -> "turn off the network"
+        "disconnect" -> "disconnect from the Wi-Fi"
+        "wifi_settings" -> "change the Wi-Fi settings"
+        "forget_network" -> "remove a saved Wi-Fi network"
+        "other_network" -> "join another network"
+        else -> "change the network settings"
+    }
+    val after = if (what == "airplane") "Wi-Fi turned back on" else "Blocked"
+    return "${name ?: "Someone at the login screen"} tried to $tried" to "$computer · $after"
+}
+
+/** "Screen time is up for Ali" and "1 h used today on kids-laptop. It shuts down in a minute." */
+fun limitAlert(name: String, e: AgentEvent, computer: String): Pair<String, String> {
+    val title = if (e.again) "$name logged in again after the time was up" else "Screen time is up for $name"
+    val then = if (e.action == "logout") "logs out in a minute" else "shuts down in a minute"
+    return title to "$computer · ${formatDuration(e.used.toLong())} today · $then"
 }

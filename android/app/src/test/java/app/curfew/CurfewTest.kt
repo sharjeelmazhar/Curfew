@@ -280,11 +280,13 @@ class CurfewTest {
         assertEquals(listOf(7800, 20, 3600, null), s.users.map { it.todaySeconds })
         assertEquals(listOf(at2055, at2055 - 86400, null, null), s.users.map { it.since })
         val now = at2055 + 3600
-        assertEquals("Logged in since 8:55 PM · Used 2 h 10 min today", useLine(s.users[0], now, karachi, false))
-        assertEquals("Logged in since 20:55 · Used 2 h 10 min today", useLine(s.users[0], now, karachi, true))
-        assertEquals("Logged in since 1 Oct 2026, 8:55 PM", useLine(s.users[1], now, karachi, false))
-        assertEquals("Used 1 h today", useLine(s.users[2], now, karachi, false))
-        assertEquals("", useLine(s.users[3], now, karachi, false))         // a computer whose Curfew is older
+        // each on a line of its own (reported: "Logged in since 6:27 PM · Used 14 min today" on one line looked wrong)
+        assertEquals(listOf("Logged in since 8:55 PM", "Used 2 h 10 min today"), useLines(s.users[0], now, karachi, false))
+        assertEquals(listOf("Logged in since 20:55", "Used 2 h 10 min today"), useLines(s.users[0], now, karachi, true))
+        assertEquals(listOf("Logged in since 1 Oct 2026, 8:55 PM"), useLines(s.users[1], now, karachi, false))
+        assertEquals(listOf("Used 1 h today"), useLines(s.users[2], now, karachi, false))
+        assertEquals(emptyList<String>(), useLines(s.users[3], now, karachi, false))     // a computer whose Curfew is older
+        assertTrue(useLines(s.users[0], now, karachi, false).none { "·" in it })
     }
 
     @Test fun datesAreDayMonthYearThenTime() {
@@ -498,7 +500,7 @@ class CurfewTest {
     }
 
     @Test fun memoryRoundTrips() {
-        val m = Memory("{\"name\":\"x\"}", 11, null, 0, 5, setOf(LoginSeen("ali", 7)), mapOf("ali" to 9L))
+        val m = Memory("{\"name\":\"x\"}", 11, null, 0, 5, setOf(LoginSeen("ali", 7)), mapOf("ali" to 9L), "e1f2", 42)
         val back = memoriesFromJson(memoriesToJson(mapOf("pc" to m)))
         assertEquals(mapOf("pc" to m), back)
         assertEquals(emptyMap<String, Memory>(), memoriesFromJson("not json"))
@@ -517,12 +519,166 @@ class CurfewTest {
     @Test fun alertAndDayWords() {
         val zone = java.time.ZoneOffset.UTC
         val start = 1_759_438_500L                                  // 2 Oct 2025, 20:55 UTC
-        assertEquals("Ali logged in" to "On kids-laptop at 8:55 PM", loginAlert("Ali", "kids-laptop", start, start + 60, zone, false))
-        assertEquals("On kids-laptop at 2 Oct 2025, 20:55", loginAlert("Ali", "kids-laptop", start, start + 86400, zone, true).second)
+        assertEquals("Ali logged in" to "kids-laptop", loginAlert("Ali", "kids-laptop"))
+        assertEquals("kids-laptop · with the password", loginAlert("Ali", "kids-laptop", "password").second)
+        assertEquals("kids-laptop · from your phone", loginAlert("Ali", "kids-laptop", "phone").second)
         val today = java.time.LocalDate.parse("2026-10-03")
         assertEquals("Today", dayLabel("2026-10-03", today))
         assertEquals("Yesterday", dayLabel("2026-10-02", today))
         assertEquals("1 Oct 2026", dayLabel("2026-10-01", today))
         assertEquals("junk", dayLabel("junk", today))
+    }
+
+    // ---------------------------------------------------------------- limits
+
+    private val limitStatus = """{"name":"pc","date":"2026-10-03","caps":["watch","limits"],"users":[
+        {"name":"ali","full":"Ali","state":"active","today":2100,"limit":{"minutes":60,"action":"poweroff","warn":true,"tell":false,
+         "extra":900,"elsewhere":600,"used":2700,"left":1800}},
+        {"name":"sara","full":"Sara","state":"none","today":4000,"limit":{"minutes":60,"action":"logout","warn":false,"tell":true,
+         "extra":0,"elsewhere":0,"used":4000,"left":0}},
+        {"name":"dad","full":"Dad","admin":true,"state":"none","today":0}]}"""
+
+    @Test fun limitsParse() {
+        val s = parseStatus(JSONObject(limitStatus))
+        assertEquals("2026-10-03", s.date)
+        val l = s.users[0].limit!!
+        assertEquals(LimitInfo(60, "poweroff", true, false, 900, 600, 2700, 1800), l)
+        assertEquals(4500, l.allowed)
+        assertFalse(l.up)
+        assertTrue(s.users[1].limit!!.up)
+        assertNull(s.users[2].limit)
+        assertNull(parseLimit(JSONObject("""{"minutes":0}""")))
+        assertEquals("", parseStatus(JSONObject("""{"name":"old"}""")).date)       // an older Curfew
+    }
+
+    @Test fun limitWords() {
+        val s = parseStatus(JSONObject(limitStatus))
+        val now = at2055
+        assertEquals(listOf("Used 45 min of 1 h 15 min today"), useLines(s.users[0].copy(since = null), now, karachi, false))
+        assertEquals(listOf("Time is up for today"), useLines(s.users[1], now, karachi, false))
+        assertEquals("1 h 30 min a day", limitTitle(90))
+        assertEquals("The computer shuts down", limitAction("poweroff"))
+        assertEquals("They are logged out", limitAction("logout"))
+        assertEquals(listOf(30, 60, 90, 120, 180), LIMIT_PRESETS)
+        assertEquals(15, LIMIT_STEPS.first())
+        assertEquals(12 * 60, LIMIT_STEPS.last())
+    }
+
+    @Test fun sharedLimitsCountTheOtherAccountsOfTheSameDay() {
+        val ali1 = Account("pc1", "ali")
+        val ali2 = Account("pc1", "ali-games")
+        val ali3 = Account("pc2", "ali")
+        val g = SharedLimit("g", setOf(ali1, ali2, ali3), 120, "poweroff", true, true)
+        fun st(date: String, vararg used: Pair<String, Int>) = Status("x", "", used.map { (n, t) ->
+            UserInfo(n, "", false, UserState.NONE, todaySeconds = t) }, null, false, setOf("limits"), date)
+        val statuses = mapOf("pc1" to st("2026-10-03", "ali" to 600, "ali-games" to 1200), "pc2" to st("2026-10-03", "ali" to 300))
+        assertEquals(mapOf(ali1 to 1500, ali2 to 900, ali3 to 1800), elsewhere(g, statuses))
+        // the other computer was last seen yesterday: its time is not today's
+        val old = statuses + ("pc2" to st("2026-10-02", "ali" to 5000))
+        assertEquals(mapOf(ali1 to 1200, ali2 to 600, ali3 to 0), elsewhere(g, old))     // and for that one, today has not begun
+        // a computer never seen gets nothing, and adds nothing
+        assertEquals(mapOf(ali1 to 1200, ali2 to 600), elsewhere(g, statuses - "pc2"))
+    }
+
+    @Test fun sharedLimitsAreKeptOnThePhone() {
+        val a = Account("pc1", "ali")
+        val b = Account("pc2", "ali")
+        val c = Account("pc1", "sara")
+        var s = StoreData(computers = listOf(Computer("pc1", "n", "p", "k", "h", 1, 0), Computer("pc2", "n", "p", "k", "h", 1, 0)))
+        s = s.withShared(a, setOf(b), 90, "logout", false, true, "g1")
+        assertEquals(SharedLimit("g1", setOf(a, b), 90, "logout", false, true), s.sharedOf(b))
+        assertEquals(s, StoreData.fromJson(s.toJson()))
+        s = s.withShared(c, setOf(b), 60, "poweroff", true, true, "g2")       // b moves to c's limit; a is left alone
+        assertNull(s.sharedOf(a))
+        assertEquals(setOf(b, c), s.sharedOf(b)!!.members)
+        assertEquals(1, s.shared.size)
+        assertNull(s.withoutShared(c).sharedOf(b))                            // a limit of one is no longer shared
+        assertNull(s.withShared(c, emptySet(), 60, "poweroff", true, true, "g3").sharedOf(b))
+        assertTrue(s.withRemoved("pc2", 0).shared.isEmpty())                  // a removed computer leaves its limits
+        // who left a shared limit is remembered until its computer stops counting the others' time
+        assertEquals(setOf(a), s.released)
+        val joined = s.withShared(a, setOf(c), 60, "poweroff", true, true, "g4")
+        assertEquals(setOf(b), joined.released)                               // a is in a shared limit again; b was left alone
+        assertEquals(setOf(b), joined.withoutReleased(a).released)
+        assertEquals(setOf(c), s.withPending(setOf(c, a)).pending)             // only accounts in a shared limit wait for it
+        assertEquals(emptySet<Account>(), s.withPending(setOf(c)).withoutPending(c).pending)
+        assertEquals(s.withPending(setOf(c)), StoreData.fromJson(s.withPending(setOf(c)).toJson()))
+        assertEquals(emptySet<Account>(), s.withPending(setOf(b)).withRemoved("pc2", 0).pending)
+        val p = s.copy(prefs = AlertPrefs(logins = false, tamper = true, limits = false))
+        assertEquals(p.prefs, StoreData.fromJson(p.toJson()).prefs)
+        assertEquals(AlertPrefs(), StoreData.fromJson("""{"computers":[]}""").prefs)    // an older phone's store
+    }
+
+    // --------------------------------------------------- events and notifications
+
+    @Test fun watchAnswersParse() {
+        val w = parseWatch(JSONObject("""{"ok":true,"epoch":"e1","seq":7,"bye":null,"status":{"name":"pc"},"events":[
+            {"seq":5,"time":100,"type":"login","user":"ali","start":99},
+            {"seq":6,"time":101,"type":"tamper","user":null,"what":"airplane"},
+            {"seq":7,"time":102,"type":"limit","user":"ali","minutes":60,"used":3605,"action":"logout","tell":false,"again":true}]}"""))
+        assertEquals("e1", w.epoch)
+        assertEquals(7, w.seq)
+        assertNull(w.bye)
+        assertEquals("pc", w.status!!.optString("name"))
+        assertEquals(AgentEvent(5, 100, "login", "ali", start = 99), w.events[0])
+        assertNull(w.events[1].user)                                          // JSON null is not the name "null"
+        assertEquals("airplane", w.events[1].what)
+        assertEquals(AgentEvent(7, 102, "limit", "ali", minutes = 60, used = 3605, action = "logout", tell = false, again = true), w.events[2])
+        val bye = parseWatch(JSONObject("""{"ok":true,"epoch":"e1","seq":7,"events":[],"bye":"sleep"}"""))
+        assertEquals("sleep", bye.bye)
+        assertNull(bye.status)
+    }
+
+    @Test fun aComputerThatSaysGoodbyeIsShownAsSuch() {
+        assertEquals(Link.SHUT_DOWN, byeLink("shutdown"))
+        assertEquals(Link.ASLEEP, byeLink("sleep"))
+        assertEquals(Link.RESTARTING, byeLink("reboot"))
+        assertNull(byeLink("restart"))                                        // only Curfew restarts: no change
+        assertEquals("Shut down", cardLine(Link.SHUT_DOWN, null))
+        assertEquals("Asleep", cardLine(Link.ASLEEP, null))
+        assertTrue(linkExplanation(Link.ASLEEP).contains("wakes up"))
+        assertEquals(Lamp.OFF, lampFor(Link.ASLEEP))
+    }
+
+    @Test fun anAccountOfAComputerThatIsOffIsNeverInUseNow() {
+        // reported: "When last seen: In use right now" with a green dot, for a computer that was off
+        assertEquals("Was in use when last seen", lastSeenState(UserState.ACTIVE))
+        assertEquals("Not logged in when last seen", lastSeenState(UserState.NONE))
+        assertTrue(UserState.values().none { lastSeenState(it).contains("right now") })
+    }
+
+    @Test fun tamperWords() {
+        val zone = java.time.ZoneOffset.UTC
+        val at = 1_759_438_500L                                     // 2 Oct 2025, 20:55 UTC
+        assertEquals(
+            "Ali tried to turn on airplane mode" to "kids-laptop · Wi-Fi turned back on",
+            tamperAlert("Ali", "airplane", "kids-laptop", at, at + 60, zone, false),
+        )
+        assertEquals("Ali tried to turn off the Wi-Fi", tamperAlert("Ali", "wifi_off", "pc", at, at, zone, false).first)
+        assertEquals("pc · Blocked", tamperAlert("Ali", "wifi_off", "pc", at, at, zone, false).second)
+        assertEquals("Ali tried to change the Wi-Fi settings", tamperAlert("Ali", "wifi_settings", "pc", at, at, zone, false).first)
+        assertEquals("Ali tried to join another network", tamperAlert("Ali", "other_network", "pc", at, at, zone, false).first)
+        assertEquals("Ali tried to change the network settings", tamperAlert("Ali", "something new", "pc", at, at, zone, false).first)
+        assertEquals("Someone at the login screen tried to turn on airplane mode", tamperAlert(null, "airplane", "pc", at, at, zone, false).first)
+        for (w in listOf("airplane", "wifi_off", "network_off", "disconnect", "wifi_settings", "forget_network", "other_network", "network"))
+            assertFalse(tamperAlert("Ali", w, "pc", at, at, zone, false).first.contains("_"))
+    }
+
+    @Test fun limitWordsInNotifications() {
+        val e = AgentEvent(1, 0, "limit", "ali", minutes = 60, used = 3610, action = "poweroff")
+        assertEquals("Screen time is up for Ali" to "pc · 1 h today · shuts down in a minute", limitAlert("Ali", e, "pc"))
+        assertEquals("pc · 1 h today · logs out in a minute", limitAlert("Ali", e.copy(action = "logout"), "pc").second)
+        assertEquals("Ali logged in again after the time was up", limitAlert("Ali", e.copy(again = true), "pc").first)
+    }
+
+    @Test fun theListOfNotificationsIsKeptNewestFirstAndNotForever() {
+        val now = 10_000_000L
+        val a = AlertEntry("1", "pc", "ali", AlertKind.LOGIN, now - 10, "t", "x")
+        val b = AlertEntry("2", "pc", null, AlertKind.TAMPER, now - 5, "t2", "y", read = true)
+        val old = AlertEntry("3", "pc", "ali", AlertKind.LIMIT, now - ALERTS_SECONDS - 1, "t3", "z")
+        assertEquals(listOf(b, a), keepAlerts(listOf(a, old, b, a.copy(title = "again")), now))
+        assertEquals(listOf(b, a), alertsFromJson(alertsToJson(listOf(b, a))))
+        assertEquals(emptyList<AlertEntry>(), alertsFromJson("garbage"))
+        assertEquals(ALERTS_KEPT, keepAlerts((1..400).map { a.copy(id = "$it", at = now - it) }, now).size)
     }
 }

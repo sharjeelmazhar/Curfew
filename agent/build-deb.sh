@@ -7,13 +7,18 @@ OUT="$(mkdir -p "${1:-$HERE/../dist}" && cd "${1:-$HERE/../dist}" && pwd)"
 VERSION="$(tr -d '[:space:]' < "$HERE/VERSION")"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 P="$T/curfew"
+EXT=curfew@sharjeelmazhar.github.io
 install -d -m 755 "$P/DEBIAN" "$P/usr/lib/curfew" "$P/usr/bin" "$P/usr/lib/systemd/system" \
-  "$P/etc/apt/sources.list.d" "$P/usr/share/keyrings" "$P/usr/share/doc/curfew"
+  "$P/etc/apt/sources.list.d" "$P/usr/share/keyrings" "$P/usr/share/doc/curfew" \
+  "$P/usr/lib/systemd/system-sleep" "$P/usr/lib/systemd/user-environment-generators" "$P/usr/share/gnome-shell/extensions/$EXT"
 install -m 755 "$HERE/curfew.py" "$P/usr/lib/curfew/curfew.py"
 install -m 644 "$HERE/curfew.service" "$P/usr/lib/systemd/system/curfew.service"
 install -m 644 "$HERE/debian/curfew.sources" "$P/etc/apt/sources.list.d/curfew.sources"
 install -m 644 "$HERE/debian/curfew-archive-keyring.gpg" "$P/usr/share/keyrings/curfew-archive-keyring.gpg"
 install -m 644 "$HERE/../README.md" "$P/usr/share/doc/curfew/README.md"
+install -m 755 "$HERE/debian/curfew-sleep" "$P/usr/lib/systemd/system-sleep/curfew"
+install -m 755 "$HERE/debian/curfew-env" "$P/usr/lib/systemd/user-environment-generators/90-curfew"
+install -m 644 "$HERE/gnome/metadata.json" "$HERE/gnome/extension.js" "$P/usr/share/gnome-shell/extensions/$EXT/"
 cat > "$P/usr/bin/curfew" <<'WRAP'
 #!/bin/sh
 [ "$(id -u)" = 0 ] || { echo "This needs administrator rights. Run it as: sudo curfew $*"; exit 1; }

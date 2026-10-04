@@ -11,6 +11,8 @@ import android.text.format.DateFormat
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,6 +38,8 @@ import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.HourglassBottom
+import androidx.compose.material.icons.rounded.BatteryAlert
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Schedule
@@ -49,9 +53,14 @@ import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.QrCodeScanner
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.WifiOff
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -94,7 +103,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.google.android.gms.common.moduleinstall.InstallStatusListener
 import com.google.android.gms.common.moduleinstall.ModuleInstall
+import com.google.android.gms.common.moduleinstall.ModuleInstallRequest
+import com.google.android.gms.common.moduleinstall.ModuleInstallStatusUpdate
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
@@ -131,7 +143,7 @@ fun secondsLeft(endsAt: Long?): Int? {
 // ------------------------------------------------------------------ home
 
 @Composable
-fun HomeScreen(repo: Repo, snack: SnackbarHostState, onOpen: (String) -> Unit, onAdd: () -> Unit) {
+fun HomeScreen(repo: Repo, snack: SnackbarHostState, onOpen: (String) -> Unit, onAdd: () -> Unit, onAlerts: () -> Unit, onSettings: () -> Unit) {
     val store by repo.store.collectAsStateWithLifecycle()
     val live by repo.live.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -140,8 +152,11 @@ fun HomeScreen(repo: Repo, snack: SnackbarHostState, onOpen: (String) -> Unit, o
     var alerts by remember { mutableStateOf(Alerts.allowed(context)) }
     var asked by rememberSaveable { mutableStateOf(false) }
     val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { alerts = it; asked = true }
+    val unread = repo.alerts.collectAsStateWithLifecycle().value.count { !it.read }
+    var free by remember { mutableStateOf(Background.free(context)) }
     Every(4000) {
         alerts = Alerts.allowed(context)
+        free = Background.free(context)
         repo.refreshAll()
     }
     fun turnOnAlerts() {
@@ -154,6 +169,10 @@ fun HomeScreen(repo: Repo, snack: SnackbarHostState, onOpen: (String) -> Unit, o
     Page(
         "Curfew", snack,
         bottomBar = { BottomAction { BigButton("Add computer", Icons.Rounded.Add, onAdd, Modifier.fillMaxWidth(), primary = true) } },
+        actions = {
+            IconButton(onClick = onSettings) { Icon(Icons.Rounded.Settings, contentDescription = "Settings") }
+            AlertsButton(unread, onAlerts)
+        },
     ) {
         if (store.computers.isEmpty()) item { EmptyHome() }
         if (BuildConfig.NO_LOCK) item { Note("Test version: the fingerprint lock is off. Do not give this version to anyone.") }
@@ -168,6 +187,18 @@ fun HomeScreen(repo: Repo, snack: SnackbarHostState, onOpen: (String) -> Unit, o
                 )
                 Spacer(Modifier.size(12.dp))
                 BigButton("Allow notifications", Icons.Rounded.Notifications, ::turnOnAlerts, Modifier.fillMaxWidth(), primary = true)
+            }
+        }
+        if (alerts && !free && store.computers.isNotEmpty()) item {
+            Card {
+                Text("Get told at once", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.size(4.dp))
+                Text(
+                    "To tell you within seconds when someone logs in, even with the app closed, Curfew needs to stay in touch with the computers. Allow it to run in the background.",
+                    style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.size(12.dp))
+                BigButton("Allow", Icons.Rounded.BatteryAlert, { Background.ask(context) }, Modifier.fillMaxWidth(), primary = true)
             }
         }
         items(store.computers, key = { it.id }) { c ->
@@ -241,7 +272,7 @@ private fun ComputerCard(c: Computer, live: Live, tag: String?, seenAt: Long, on
 private enum class Ask { POWEROFF, REBOOT, REMOVE, RENAME, LOGOUT, NET_OFF }
 
 @Composable
-fun ComputerScreen(repo: Repo, snack: SnackbarHostState, id: String, onBack: () -> Unit, onGone: () -> Unit, onUser: (String) -> Unit, onUsage: () -> Unit) {
+fun ComputerScreen(repo: Repo, snack: SnackbarHostState, id: String, onBack: () -> Unit, onGone: () -> Unit, onUser: (String) -> Unit, onUsage: () -> Unit, onWeb: () -> Unit) {
     val store by repo.store.collectAsStateWithLifecycle()
     val liveMap by repo.live.collectAsStateWithLifecycle()
     val c = store.computers.find { it.id == id }
@@ -339,8 +370,9 @@ fun ComputerScreen(repo: Repo, snack: SnackbarHostState, id: String, onBack: () 
                 }
             }
             if (live.status?.caps?.contains("usage") == true) item {
-                ScreenTimeLink("How long each account was used today and yesterday, and when it logged in", onUsage)
+                ScreenTimeLink("How long each account was used in the last 7 days, and when it logged in", onUsage)
             }
+            live.status?.takeIf { "web" in it.caps }?.let { st -> item { WebLink(st.web, onWeb) } }
         }
         item {
             Box(Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.Center) {
@@ -401,7 +433,7 @@ private fun ScreenTimeLink(text: String, onClick: () -> Unit) {
 }
 
 /** What a countdown request carries. Whole minutes are also sent the old way, for a computer whose Curfew is older. */
-private fun lengthArgs(seconds: Int, warn: Boolean): Map<String, Any> =
+fun lengthArgs(seconds: Int, warn: Boolean): Map<String, Any> =
     mapOf("seconds" to seconds, "warn" to warn) + if (seconds > 0 && seconds % 60 == 0) mapOf("minutes" to seconds / 60) else emptyMap()
 
 @Composable
@@ -456,7 +488,7 @@ private fun TimerChoices(title: String, enabled: Boolean, warn: Boolean, onWarn:
     ) {
         Column(Modifier.weight(1f).padding(end = 12.dp)) {
             Text("Warn them first", style = MaterialTheme.typography.bodyLarge)
-            Text(warnText, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(boldNames(warnText), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Switch(checked = warn, onCheckedChange = null)
     }
@@ -480,15 +512,18 @@ private fun TimerChoices(title: String, enabled: Boolean, warn: Boolean, onWarn:
 }
 
 @Composable
-private fun Pill(text: String, enabled: Boolean, onClick: () -> Unit) {
+fun Pill(text: String, enabled: Boolean, chosen: Boolean = false, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
     OutlinedButton(
         onClick = onClick, enabled = enabled, shape = CircleShape,
+        colors = if (chosen) ButtonDefaults.outlinedButtonColors(containerColor = scheme.primary, contentColor = scheme.onPrimary)
+        else ButtonDefaults.outlinedButtonColors(),
         contentPadding = PaddingValues(horizontal = 18.dp, vertical = 10.dp), modifier = Modifier.heightIn(min = 48.dp),
     ) { Text(text, style = MaterialTheme.typography.titleSmall) }
 }
 
 @Composable
-private fun Avatar(name: String, size: Dp) {
+fun Avatar(name: String, size: Dp) {
     Box(Modifier.size(size).clip(CircleShape).background(MaterialTheme.colorScheme.secondaryContainer), contentAlignment = Alignment.Center) {
         Text(
             name.trim().take(1).uppercase(), color = MaterialTheme.colorScheme.onSecondaryContainer, fontWeight = FontWeight.SemiBold,
@@ -499,13 +534,13 @@ private fun Avatar(name: String, size: Dp) {
 
 /** The phone's time zone, and whether it is set to the 24-hour clock. */
 @Composable
-private fun clock(): Pair<ZoneId, Boolean> {
+fun clock(): Pair<ZoneId, Boolean> {
     val context = LocalContext.current
-    return remember { ZoneId.systemDefault() to DateFormat.is24HourFormat(context) }
+    return remember { Alerts.clock(context) }
 }
 
 @Composable
-private fun stateColor(s: UserState): Color = when (s) {
+fun stateColor(s: UserState): Color = when (s) {
     UserState.ACTIVE -> LocalExtra.current.on
     UserState.LOCKED -> MaterialTheme.colorScheme.tertiary
     UserState.LOGGED_IN -> LocalExtra.current.away
@@ -537,10 +572,10 @@ private fun UserRow(u: UserInfo, title: String, onClick: () -> Unit) {
             Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             StateLine(u)
             val (zone, h24) = clock()
-            val use = useLine(u, System.currentTimeMillis() / 1000, zone, h24)
-            if (use.isNotEmpty()) Text(
-                use, Modifier.padding(start = 17.dp), style = MaterialTheme.typography.bodyMedium.merge(Tabular),
-                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis,
+            for (line in useLines(u, System.currentTimeMillis() / 1000, zone, h24)) Text(
+                line, Modifier.padding(start = 17.dp), style = MaterialTheme.typography.bodyMedium.merge(Tabular),
+                color = if (u.limit?.up == true && line == limitLine(u.limit)) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2, overflow = TextOverflow.Ellipsis,
             )
         }
         Icon(Icons.Rounded.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
@@ -552,7 +587,7 @@ private fun UserRow(u: UserInfo, title: String, onClick: () -> Unit) {
 @Composable
 fun UserScreen(
     repo: Repo, snack: SnackbarHostState, id: String, userName: String, onBack: () -> Unit, onGone: () -> Unit,
-    onBrowser: (String) -> Unit, onUsage: () -> Unit,
+    onBrowser: (String) -> Unit, onUsage: () -> Unit, onLimit: () -> Unit, onWeb: () -> Unit,
 ) {
     val store by repo.store.collectAsStateWithLifecycle()
     val liveMap by repo.live.collectAsStateWithLifecycle()
@@ -678,6 +713,22 @@ fun UserScreen(
                 }
             }
         }
+        if (on && user != null && !user.admin && "web" in caps) item {
+            live.status?.web?.let { w -> WebLink(w.of(userName), onWeb, all = w) }
+        }
+        if (on && user != null && !user.admin) item {
+            if ("limits" in caps) LimitCard(repo, c, user, name, busy == null, onLimit) { minutes ->
+                if (busy == null) {
+                    busy = "more"
+                    scope.launch {
+                        val error = repo.moreTime(Account(id, userName), minutes)
+                        busy = null
+                        say(snack, error ?: "$name has ${formatMinutes(minutes)} more today")
+                    }
+                }
+            }
+            else Note("Daily screen-time limits need a newer Curfew on ${c.title}. To update it, run there: sudo apt update && sudo apt upgrade")
+        }
         if (approvedLeft != null && approvedLeft > 0) item {
             Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(20.dp)) {
@@ -690,6 +741,9 @@ fun UserScreen(
                     )
                 }
             }
+        }
+        if (on && user != null && "login" in caps && user.state == UserState.NONE && user.limit?.up == true) item {
+            Note("$name’s time for today is used up. If $name logs in now, the computer shuts down again after a minute. Give more time above first.")
         }
         if (on && user != null && "login" in caps && user.state != UserState.ACTIVE) item {
             BigButton(
@@ -758,7 +812,7 @@ fun UserScreen(
                             Spacer(Modifier.size(12.dp))
                             TimerChoices(
                                 "Turn the internet off after", busy == null, netWarn, { netWarn = it },
-                                "Shows $name a notice when the timer starts and one minute before the internet goes off", ::netOffAfter,
+                                "Shows ${bold(name)} a notice when the timer starts and one minute before the internet goes off", ::netOffAfter,
                             )
                             if (!user.netOff) {
                                 Spacer(Modifier.size(8.dp))
@@ -795,7 +849,7 @@ fun UserScreen(
         val list = apps
         when {
             !on -> item { Note("The computer cannot be reached, so there is nothing to show.") }
-            !loggedIn -> item { Note("$name is not logged in, so nothing is open.") }
+            !loggedIn -> item { Note("${bold(name)} is not logged in, so nothing is open.") }
             list == null && failed -> item { Note("Could not get the list. Trying again…") }
             list == null -> item {
                 Card {
@@ -841,8 +895,8 @@ fun UserScreen(
 }
 
 @Composable
-private fun Note(text: String) {
-    Card { Text(text, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+fun Note(text: String) {
+    Card { Text(boldNames(text), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant) }
 }
 
 @Composable
@@ -874,7 +928,7 @@ private fun AppRow(a: AppInfo) {
 }
 
 @Composable
-private fun LookingCard() {
+fun LookingCard() {
     Card {
         Row(verticalAlignment = Alignment.CenterVertically) {
             CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.5.dp)
@@ -978,7 +1032,7 @@ fun UsageScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: Stri
                 item {
                     Text(
                         "Time counts while the account is on the screen and unlocked. A locked screen, or an account left logged in " +
-                            "while someone else uses the computer, does not count. Today and yesterday are kept; older days are not.",
+                            "while someone else uses the computer, does not count. The last 7 days are kept; older days are not.",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 4.dp),
                     )
                 }
@@ -1000,26 +1054,28 @@ private fun UsageCard(
             Column(Modifier.weight(1f)) {
                 Text(name, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(9.dp).clip(CircleShape).background(stateColor(u.state)))
+                    // the computer cannot be reached: nobody is shown as in use now
+                    Box(Modifier.size(9.dp).clip(CircleShape).background(stateColor(if (stale) UserState.NONE else u.state)))
                     Spacer(Modifier.width(8.dp))
-                    Text((if (stale) "When last seen: " else "") + u.state.label, style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
+                    Text(if (stale) lastSeenState(u.state) else u.state.label, style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
                 }
             }
         }
         val since = u.since
         if (since != null) {
             Spacer(Modifier.size(12.dp))
-            Text(if (stale) "Was logged in since" else "Logged in since", style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
+            Text(if (stale) "Logged in at" else "Logged in since", style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
             Text(formatMoment(since, zone, h24), style = MaterialTheme.typography.titleMedium.merge(Tabular))
         }
         if (u.empty) {
             Spacer(Modifier.size(12.dp))
-            Text("Not used today or yesterday.", style = MaterialTheme.typography.bodyLarge, color = scheme.onSurfaceVariant)
+            Text("Not used in the last 7 days.", style = MaterialTheme.typography.bodyLarge, color = scheme.onSurfaceVariant)
         } else {
             Spacer(Modifier.size(16.dp))
-            u.today?.let { UseBar(dayLabel(it.date, today), it, longest, LocalExtra.current.on) }
-            Spacer(Modifier.size(14.dp))
-            u.yesterday?.let { UseBar(dayLabel(it.date, today), it, longest, scheme.primary) }
+            u.days.forEachIndexed { i, d ->
+                if (i > 0) Spacer(Modifier.size(14.dp))
+                UseBar(dayLabel(d.date, today), d, longest, if (i == 0) LocalExtra.current.on else scheme.primary)
+            }
             if (!stale) {
                 Spacer(Modifier.size(14.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1069,7 +1125,7 @@ private fun LoginRow(l: LoginSpan, now: Long, zone: ZoneId, h24: Boolean, stale:
     val scheme = MaterialTheme.colorScheme
     val length = formatDuration((l.end ?: now) - l.start)
     Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.Top) {
-        Box(Modifier.padding(top = 7.dp).size(9.dp).clip(CircleShape).background(if (l.end == null) LocalExtra.current.on else scheme.onSurface.copy(alpha = 0.18f)))
+        Box(Modifier.padding(top = 7.dp).size(9.dp).clip(CircleShape).background(if (l.end == null && !stale) LocalExtra.current.on else scheme.onSurface.copy(alpha = 0.18f)))
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(formatMoment(l.start, zone, h24), style = MaterialTheme.typography.bodyLarge.merge(Tabular))
@@ -1113,6 +1169,31 @@ fun BrowserScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: St
             .onFailure { AppLock.away = false; scope.say(snack, "Could not open that page") }
     }
 
+    var blocking by remember { mutableStateOf<String?>(null) }
+    blocking?.let { site ->
+        val canBlock = live.status?.caps?.contains("web") == true
+        val who = c.userAliases[userName] ?: live.status?.users?.find { it.name == userName }?.display ?: userName
+        fun block(forUser: String?) {
+            blocking = null
+            if (!canBlock) return
+            val sites = live.status?.web?.of(forUser)?.sites.orEmpty()
+            if (site in sites) scope.say(snack, "$site is already blocked")
+            else scope.launch { scope.say(snack, repo.setWeb(id, sites + site, user = forUser) ?: "$site is blocked" + if (forUser != null) " for $who" else " for every child") }
+        }
+        ConfirmSheet(
+            "Block $site?",
+            if (canBlock) "Nobody blocked from it can open $site or anything under it, in any browser."
+            else "Blocking websites needs a newer Curfew on ${c.title}.",
+            "Block for $who only",
+            onConfirm = { block(userName) },
+            onDismiss = { blocking = null },
+        ) {
+            if (canBlock) {
+                Spacer(Modifier.size(16.dp))
+                BigButton("Block for every child", Icons.Rounded.Block, { block(null) }, Modifier.fillMaxWidth())
+            }
+        }
+    }
     Page(b?.name ?: "Websites", snack, onBack) {
         item {
             OutlinedTextField(
@@ -1130,23 +1211,24 @@ fun BrowserScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: St
             else -> {
                 item { SectionLabel("Open now") }
                 if (open.isEmpty()) item { Note(if (query.isBlank()) "No tabs open right now." else "No open tabs match “${query.trim()}”.") }
-                else items(open, key = { "o:" + it.url }) { WebRow(it, now, openInBrowser) }
+                else items(open, key = { "o:" + it.url }) { WebRow(it, now, openInBrowser) { blocking = mainSite(it.url) } }
 
                 item { SectionLabel("Recently visited") }
                 if (recent.isEmpty()) item { Note(if (query.isBlank()) "No history in the last 7 days." else "No pages match “${query.trim()}”.") }
-                else items(recent, key = { "r:" + it.url }) { WebRow(it, now, openInBrowser) }
+                else items(recent, key = { "r:" + it.url }) { WebRow(it, now, openInBrowser) { blocking = mainSite(it.url) } }
             }
         }
     }
 }
 
 @Composable
-private fun WebRow(e: WebEntry, nowSeconds: Long, onOpen: (WebEntry) -> Unit) {
+@OptIn(ExperimentalFoundationApi::class)
+private fun WebRow(e: WebEntry, nowSeconds: Long, onOpen: (WebEntry) -> Unit, onBlock: () -> Unit = {}) {
     val scheme = MaterialTheme.colorScheme
     val search = e.search.isNotBlank()
     Surface(shape = MaterialTheme.shapes.large, color = LocalExtra.current.card, modifier = Modifier.fillMaxWidth()) {
         Row(
-            Modifier.fillMaxWidth().clickable { onOpen(e) }.padding(12.dp),
+            Modifier.fillMaxWidth().combinedClickable(onLongClick = { if (e.url.isNotBlank()) onBlock() }) { onOpen(e) }.padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
@@ -1207,10 +1289,49 @@ fun AddScreen(repo: Repo, snack: SnackbarHostState, onBack: () -> Unit, onDone: 
         }
     }
 
+    /** Percent downloaded while the scanner is being fetched, or null when it is not. */
+    var preparing by remember { mutableStateOf<Int?>(null) }
+    fun scannerClient() = GmsBarcodeScanning.getClient(
+        context, GmsBarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).enableAutoZoom().build(),
+    )
+
+    /** The scanner is a small part of Google Play services that some phones do not have yet.
+     *  Asks for it straight away (not "when convenient") and shows the download. */
+    fun getScannerReady() {
+        if (preparing != null) return
+        val installer = ModuleInstall.getClient(context)
+        val scanner = scannerClient()
+        installer.areModulesAvailable(scanner).addOnSuccessListener { have ->
+            if (have.areModulesAvailable()) return@addOnSuccessListener
+            preparing = 0
+            val listener = object : InstallStatusListener {
+                override fun onInstallStatusUpdated(update: ModuleInstallStatusUpdate) {
+                    update.progressInfo?.let { p ->
+                        if (p.totalBytesToDownload > 0) preparing = (p.bytesDownloaded * 100 / p.totalBytesToDownload).toInt()
+                    }
+                    when (update.installState) {
+                        ModuleInstallStatusUpdate.InstallState.STATE_COMPLETED -> {
+                            preparing = null; installer.unregisterListener(this)
+                            if (error?.startsWith("The camera scanner") == true) error = null
+                        }
+                        ModuleInstallStatusUpdate.InstallState.STATE_FAILED, ModuleInstallStatusUpdate.InstallState.STATE_CANCELED -> {
+                            preparing = null; installer.unregisterListener(this)
+                            manual = true
+                            error = "The camera scanner could not be downloaded. Check the phone's internet, or type the address and code below."
+                        }
+                    }
+                }
+            }
+            installer.installModules(ModuleInstallRequest.newBuilder().addApi(scanner).setListener(listener).build())
+                .addOnSuccessListener { if (it.areModulesAlreadyInstalled()) preparing = null }
+                .addOnFailureListener { preparing = null }
+        }
+    }
+    LaunchedEffect(Unit) { getScannerReady() }
+
     fun scan() {
         error = null
-        val options = GmsBarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).enableAutoZoom().build()
-        val scanner = GmsBarcodeScanning.getClient(context, options)
+        val scanner = scannerClient()
         AppLock.away = true         // the scanner is another screen; coming back from it is not a new visit
         scanner.startScan()
             .addOnCanceledListener { AppLock.away = false }
@@ -1220,16 +1341,23 @@ fun AddScreen(repo: Repo, snack: SnackbarHostState, onBack: () -> Unit, onDone: 
             }
             .addOnFailureListener {
                 AppLock.away = false
-                // The scanner is a small Google Play download; ask for it so the next try works.
-                runCatching { ModuleInstall.getClient(context).deferredInstall(scanner) }
+                getScannerReady()
                 manual = true
-                error = "The camera scanner is not ready on this phone yet. Try again in a minute, or type the address and code below."
+                error = "The camera scanner is not ready on this phone yet. It is downloading now; tap Scan again when it is done, or type the address and code below."
             }
     }
 
     Page(
         "Add computer", snack, onBack,
-        bottomBar = { BottomAction { BigButton("Scan the code", Icons.Rounded.QrCodeScanner, ::scan, Modifier.fillMaxWidth(), busy = busy, primary = true) } },
+        bottomBar = {
+            BottomAction {
+                val p = preparing
+                BigButton(
+                    if (p == null) "Scan the code" else "Getting the scanner ready… $p%", Icons.Rounded.QrCodeScanner, ::scan,
+                    Modifier.fillMaxWidth(), busy = busy || p != null, enabled = p == null, primary = true,
+                )
+            }
+        },
     ) {
         item {
             Card {

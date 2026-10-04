@@ -1,6 +1,6 @@
 <resources>
     <color name="page">#0B0B0F</color>
-    <style name="Theme.Curfew" parent="android:Theme.Material.NoActionBar">
+    <style name="Theme.Curfew" parent="Theme.AppCompat.NoActionBar">
         <item name="android:windowBackground">@color/page</item>
     </style>
 </resources>

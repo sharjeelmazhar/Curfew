@@ -19,6 +19,9 @@ class HttpResult(val code: Int, val body: String)
 /** Sends one HTTP request; body == null means GET. Throws IOException when the host cannot be reached. */
 fun interface Transport {
     fun send(to: Endpoint, path: String, body: String?): HttpResult
+
+    /** The same, for a request the computer may hold open for up to [waitMs] (a "watch"). */
+    fun send(to: Endpoint, path: String, body: String?, waitMs: Int): HttpResult = send(to, path, body)
 }
 
 object Proto {
@@ -110,7 +113,8 @@ class Client(private val transport: Transport) {
     private fun refused(e: IOException) =
         e is ConnectException && (e.message ?: "").contains("refused", ignoreCase = true)
 
-    fun call(to: Endpoint, agentId: String, phoneId: String, key: ByteArray, payload: JSONObject): Reply {
+    /** [waitMs]: how long the computer may hold the answer back (only a "watch" does). */
+    fun call(to: Endpoint, agentId: String, phoneId: String, key: ByteArray, payload: JSONObject, waitMs: Int = 0): Reply {
         repeat(2) {
             try {
                 val hello = hello(to)
@@ -119,7 +123,7 @@ class Client(private val transport: Transport) {
                 val text = payload.toString()
                 val env = JSONObject().put("phone", phoneId).put("snonce", hello.nonce).put("cnonce", cnonce)
                     .put("payload", text).put("mac", Proto.mac(key, "req", phoneId, hello.nonce, cnonce, text))
-                val res = transport.send(to, "/v1/call", env.toString())
+                val res = if (waitMs > 0) transport.send(to, "/v1/call", env.toString(), waitMs) else transport.send(to, "/v1/call", env.toString())
                 val body = JSONObject(res.body)
                 if (res.code == 200) {
                     val answer = body.optString("payload")
