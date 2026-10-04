@@ -540,7 +540,7 @@ fun formatWhen(whenSeconds: Long, nowSeconds: Long): String {
 }
 
 /** How the phone currently sees a computer. */
-enum class Link { CHECKING, ON, OFF, SHUT_DOWN, ASLEEP, RESTARTING, NOT_RUNNING, NO_WIFI, OTHER_WIFI, AWAY, NOT_RECOGNISED }
+enum class Link { CHECKING, ON, OFF, SHUT_DOWN, ASLEEP, RESTARTING, NOT_RUNNING, NO_WIFI, OTHER_WIFI, NO_TAILSCALE, NO_TAILSCALE_WIFI, AWAY, NOT_RECOGNISED }
 
 /** What a computer said as it went away (the "bye" of a watch answer). */
 fun byeLink(bye: String): Link? = when (bye) {
@@ -560,7 +560,9 @@ fun cardLine(link: Link, status: Status?, nameOf: (UserInfo) -> String = { it.di
     Link.NOT_RUNNING -> "On, but Curfew is not running on it"
     Link.NO_WIFI -> "This phone is not on Wi-Fi"
     Link.OTHER_WIFI -> "This phone is not on the home Wi-Fi"
-    Link.AWAY -> "Cannot be reached from here"
+    Link.NO_TAILSCALE -> "Tailscale is off on this phone"
+    Link.NO_TAILSCALE_WIFI -> "Cannot be reached on this Wi-Fi"
+    Link.AWAY -> "Probably shut down"
     Link.NOT_RECOGNISED -> "Needs pairing again"
 }
 
@@ -572,7 +574,9 @@ fun linkExplanation(link: Link): String = when (link) {
     Link.NOT_RUNNING -> "The computer is on, but the Curfew service on it is not answering. Restarting the computer usually fixes it."
     Link.NO_WIFI -> "Curfew only works over the home Wi-Fi. Turn Wi-Fi on to see and control this computer."
     Link.OTHER_WIFI -> "This phone is connected to a different network. Curfew works only when the phone and the computer are on the same home Wi-Fi."
-    Link.AWAY -> "Away from home, turn on Tailscale on this phone. If it is already on, the computer is shut down, asleep or has no internet. This page updates by itself when it can be reached."
+    Link.NO_TAILSCALE -> "Away from home, Curfew reaches the computer through Tailscale. Turn Tailscale on in this phone and this page updates by itself."
+    Link.NO_TAILSCALE_WIFI -> "One of two things: this phone is on a different Wi-Fi than the computer (then turn Tailscale on in this phone), or the computer is shut down or asleep. This page updates by itself."
+    Link.AWAY -> "Tailscale is on, but the computer does not answer. Most likely it is shut down or asleep, or it has no internet right now. This page updates by itself when it comes back."
     Link.NOT_RECOGNISED -> "This computer no longer recognises this phone. It was probably reinstalled. Remove it here, then pair it again: run “sudo curfew pair” on the computer and tap Add computer."
     else -> ""
 }
@@ -596,12 +600,12 @@ fun inSubnet(host: String, addr: String, prefix: Int): Boolean {
 fun isTailnet(host: String) = inSubnet(host, "100.64.0.0", 10)
 
 /** The phone's own network: is it on Wi-Fi, and which IPv4 networks is it attached to. */
-data class NetInfo(val wifi: Boolean, val nets: List<Pair<String, Int>>)
+data class NetInfo(val wifi: Boolean, val nets: List<Pair<String, Int>>, val vpn: Boolean = false)
 
 /** Why can't we reach [host]? Everything the phone can tell from its side. */
 fun diagnose(net: NetInfo, host: String, refused: Boolean): Link = when {
     refused -> Link.NOT_RUNNING
-    isTailnet(host) -> Link.AWAY
+    isTailnet(host) -> if (net.vpn) Link.AWAY else if (net.wifi) Link.NO_TAILSCALE_WIFI else Link.NO_TAILSCALE
     !net.wifi -> Link.NO_WIFI
     host.all { it.isDigit() || it == '.' } && net.nets.isNotEmpty() && net.nets.none { inSubnet(host, it.first, it.second) } -> Link.OTHER_WIFI
     else -> Link.OFF

@@ -409,7 +409,9 @@ class Repo(private val app: Context) {
         val wifi = caps != null && (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) || caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET))
         val nets = n?.let(cm::getLinkProperties)?.linkAddresses.orEmpty()
             .filter { it.address is Inet4Address }.mapNotNull { a -> a.address.hostAddress?.let { it to a.prefixLength } }
-        return NetInfo(wifi, nets)
+        @Suppress("DEPRECATION")        // Tailscale (or any VPN) is on in this phone
+        val vpn = cm.allNetworks.any { cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true }
+        return NetInfo(wifi, nets, vpn)
     }
 
     private fun endpoints(id: String, host: String, port: Int) =
