@@ -360,7 +360,7 @@ fun ComputerScreen(repo: Repo, snack: SnackbarHostState, id: String, onBack: () 
                 }
             }
             if (live.status?.caps?.contains("usage") == true) item {
-                ScreenTimeLink("How long each account was used today and yesterday, and when it logged in", onUsage)
+                ScreenTimeLink("How long each account was used in the last 7 days, and when it logged in", onUsage)
             }
         }
         item {
@@ -477,7 +477,7 @@ private fun TimerChoices(title: String, enabled: Boolean, warn: Boolean, onWarn:
     ) {
         Column(Modifier.weight(1f).padding(end = 12.dp)) {
             Text("Warn them first", style = MaterialTheme.typography.bodyLarge)
-            Text(warnText, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(boldNames(warnText), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Switch(checked = warn, onCheckedChange = null)
     }
@@ -798,7 +798,7 @@ fun UserScreen(
                             Spacer(Modifier.size(12.dp))
                             TimerChoices(
                                 "Turn the internet off after", busy == null, netWarn, { netWarn = it },
-                                "Shows $name a notice when the timer starts and one minute before the internet goes off", ::netOffAfter,
+                                "Shows ${bold(name)} a notice when the timer starts and one minute before the internet goes off", ::netOffAfter,
                             )
                             if (!user.netOff) {
                                 Spacer(Modifier.size(8.dp))
@@ -835,7 +835,7 @@ fun UserScreen(
         val list = apps
         when {
             !on -> item { Note("The computer cannot be reached, so there is nothing to show.") }
-            !loggedIn -> item { Note("$name is not logged in, so nothing is open.") }
+            !loggedIn -> item { Note("${bold(name)} is not logged in, so nothing is open.") }
             list == null && failed -> item { Note("Could not get the list. Trying again…") }
             list == null -> item {
                 Card {
@@ -882,7 +882,7 @@ fun UserScreen(
 
 @Composable
 fun Note(text: String) {
-    Card { Text(text, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    Card { Text(boldNames(text), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant) }
 }
 
 @Composable
@@ -1018,7 +1018,7 @@ fun UsageScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: Stri
                 item {
                     Text(
                         "Time counts while the account is on the screen and unlocked. A locked screen, or an account left logged in " +
-                            "while someone else uses the computer, does not count. Today and yesterday are kept; older days are not.",
+                            "while someone else uses the computer, does not count. The last 7 days are kept; older days are not.",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 4.dp),
                     )
                 }
@@ -1055,12 +1055,13 @@ private fun UsageCard(
         }
         if (u.empty) {
             Spacer(Modifier.size(12.dp))
-            Text("Not used today or yesterday.", style = MaterialTheme.typography.bodyLarge, color = scheme.onSurfaceVariant)
+            Text("Not used in the last 7 days.", style = MaterialTheme.typography.bodyLarge, color = scheme.onSurfaceVariant)
         } else {
             Spacer(Modifier.size(16.dp))
-            u.today?.let { UseBar(dayLabel(it.date, today), it, longest, LocalExtra.current.on) }
-            Spacer(Modifier.size(14.dp))
-            u.yesterday?.let { UseBar(dayLabel(it.date, today), it, longest, scheme.primary) }
+            u.days.forEachIndexed { i, d ->
+                if (i > 0) Spacer(Modifier.size(14.dp))
+                UseBar(dayLabel(d.date, today), d, longest, if (i == 0) LocalExtra.current.on else scheme.primary)
+            }
             if (!stale) {
                 Spacer(Modifier.size(14.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {

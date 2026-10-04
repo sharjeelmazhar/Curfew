@@ -151,9 +151,9 @@ check("logging in again adds to the same day", d["users"]["kid"]["days"][day(noo
 curfew.usage_step(d, [kid("active")], noon + 86400, 15)
 days = d["users"]["kid"]["days"]
 check("a new day starts from zero and keeps yesterday", days[day(noon + 86400)]["used"] == 15 and days[day(noon)]["used"] == 45)
-curfew.usage_step(d, [kid("active")], noon + 2 * 86400, 15)
+curfew.usage_step(d, [kid("active")], noon + 7 * 86400, 15)
 e = d["users"]["kid"]
-check("older days and their logins are forgotten", sorted(e["days"]) == [day(noon + 86400), day(noon + 2 * 86400)] and e["logins"] == [[int(noon + 120), None]])
+check("older days and their logins are forgotten", sorted(e["days"]) == [day(noon + 86400), day(noon + 7 * 86400)] and e["logins"] == [[int(noon + 120), None]])
 check("logind's time is read", curfew.stamp("Fri 2026-10-02 12:00:00 PKT") == int(noon) and curfew.stamp("") is None)
 
 # --- the Wi-Fi stays on (a made-up /sys/class/rfkill; nothing real is touched)

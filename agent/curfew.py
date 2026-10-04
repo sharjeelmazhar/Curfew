@@ -812,7 +812,7 @@ def op_watch(req, st):
 
 USAGE_TICK = 15                 # seconds between looks at who is logged in
 USAGE_SAVE = 60                 # seconds between writes to disk
-USAGE_DAYS = 2                  # today and yesterday
+USAGE_DAYS = 7                  # today and the 6 days before
 USAGE_LOGINS = 40               # logins remembered per account
 SEEN = {"lock": threading.Lock(), "data": None, "looked": None, "saved": 0.0, "dirty": False}
 
@@ -1029,6 +1029,16 @@ def fw_rules(uid):
             who + ["!", "-o", "lo", "-j", "REJECT"]]
 
 
+WIRED = ("en+", "eth+", "usb+")   # cable and USB network devices; Wi-Fi ("wl...") is left alone
+
+
+def fw_wired(uid):
+    """Accounts that are not administrators reach the internet over Wi-Fi only, where the
+    parent's Wi-Fi rules apply, not through a cable plugged in."""
+    who = ["-m", "owner", "--uid-owner", str(uid)]
+    return [who + ["-o", dev, "-j", "REJECT"] for dev in WIRED]
+
+
 def net_supported():
     return DRY or bool(shutil.which("iptables"))
 
@@ -1039,7 +1049,9 @@ def net_sync():
     with state() as st:
         pass
     off = {n for n, e in st["net"].items() if e.get("blocked")}
-    users = [u for u in human_users() if u["name"] in off and not u["admin"]]
+    kids = [u for u in human_users() if not u["admin"]]
+    users = [u for u in kids if u["name"] in off]
+    rules = [r for u in kids for r in (fw_rules(u["uid"]) if u["name"] in off else fw_wired(u["uid"]))]
     if DRY:
         log("would block the internet for: " + (", ".join(u["name"] for u in users) or "nobody"))
         return True
@@ -1051,9 +1063,9 @@ def net_sync():
                 continue
             ipt = lambda *a: subprocess.run([tool, "-w", "5", *a], capture_output=True, text=True, timeout=15)
             have = ipt("-S", FW_CHAIN)
-            if have.returncode != 0 and not users:
+            if have.returncode != 0 and not rules:
                 continue
-            want = sorted(str(u["uid"]) for u in users for _ in fw_rules(u["uid"]))
+            want = sorted(re.search(r"--uid-owner (\d+)", " ".join(r)).group(1) for r in rules)
             first = [ln for ln in ipt("-S", "OUTPUT").stdout.splitlines() if ln.startswith("-A ")][:1]
             if (have.returncode == 0 and first == ["-A OUTPUT -j " + FW_CHAIN]
                     and sorted(re.findall(r"--uid-owner (\d+)", have.stdout)) == want):
@@ -1061,7 +1073,7 @@ def net_sync():
             log("updating %s: internet off for %s" % (tool, ", ".join(u["name"] for u in users) or "nobody"))
             ipt("-N", FW_CHAIN)
             ipt("-F", FW_CHAIN)
-            done = [ipt("-A", FW_CHAIN, *r).returncode == 0 for u in users for r in fw_rules(u["uid"])]
+            done = [ipt("-A", FW_CHAIN, *r).returncode == 0 for r in rules]
             while ipt("-D", "OUTPUT", "-j", FW_CHAIN).returncode == 0:
                 pass
             done.append(ipt("-I", "OUTPUT", "1", "-j", FW_CHAIN).returncode == 0)   # ahead of any other rule
@@ -1268,8 +1280,7 @@ def timer_loop():
                 log("timer reached zero")
                 power("poweroff")
             continue
-        blocking = any(e.get("blocked") for e in st["net"].values())
-        if checked is None or (blocking and time.monotonic() - checked >= 30):
+        if checked is None or time.monotonic() - checked >= 30:     # also new accounts, a cable plugged in
             net_sync()
             checked = time.monotonic()
         lefts = [e["deadline"] - now for e in entries if e and e.get("deadline") is not None]
