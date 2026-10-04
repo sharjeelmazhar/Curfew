@@ -1,0 +1,9 @@
+#!/bin/sh
+# Installed by Curfew as an ExecCondition of GNOME's radio service (gsd-rfkill), which is what
+# shows the airplane-mode switch. The login screen runs as a dynamic user (uid 60000 and up, no
+# shell) and may not have it, so nobody at the login screen can cut the Wi-Fi. Everyone else keeps it
+# (children's switch is hidden by Curfew's GNOME Shell add-on instead).
+uid="$(id -u)"
+[ "$uid" -ge 60000 ] && exit 1
+case "$(getent passwd "$uid" | cut -d: -f7)" in */nologin|*/false) exit 1 ;; esac
+exit 0
