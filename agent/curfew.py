@@ -79,6 +79,7 @@ def state(write=False):
             st.setdefault(k, {})
         for k in ("pairing", "timer"):
             st.setdefault(k, None)
+        st.setdefault("web", {"sites": [], "private": False})
         yield st
         if write:
             tmp = path + ".tmp"
@@ -1039,6 +1040,21 @@ def fw_wired(uid):
     return [who + ["-o", dev, "-j", "REJECT"] for dev in WIRED]
 
 
+def fw_sites(uid, sites):
+    """Blocked websites for one account: the site's name travels in the clear when a browser
+    connects (the TLS "server name", or the Host line of plain HTTP), so the firewall can refuse
+    those connections. QUIC is refused too, so browsers fall back to connections it can read."""
+    if not sites:
+        return []
+    who = ["-m", "owner", "--uid-owner", str(uid)]
+    return ([who + ["-p", "udp", "--dport", "443", "-j", "REJECT"]]
+            + [who + ["-p", "tcp", "-m", "multiport", "--dports", "80,443", "-m", "string", "--algo", "bm",
+                      "--string", site, "-j", "REJECT", "--reject-with", "tcp-reset"] for site in sites])
+
+
+_fw_done = {}
+
+
 def net_supported():
     return DRY or bool(shutil.which("iptables"))
 
@@ -1051,7 +1067,8 @@ def net_sync():
     off = {n for n, e in st["net"].items() if e.get("blocked")}
     kids = [u for u in human_users() if not u["admin"]]
     users = [u for u in kids if u["name"] in off]
-    rules = [r for u in kids for r in (fw_rules(u["uid"]) if u["name"] in off else fw_wired(u["uid"]))]
+    sites = st["web"].get("sites") or []
+    rules = [r for u in kids for r in (fw_rules(u["uid"]) if u["name"] in off else fw_wired(u["uid"]) + fw_sites(u["uid"], sites))]
     if DRY:
         log("would block the internet for: " + (", ".join(u["name"] for u in users) or "nobody"))
         return True
@@ -1067,7 +1084,7 @@ def net_sync():
                 continue
             want = sorted(re.search(r"--uid-owner (\d+)", " ".join(r)).group(1) for r in rules)
             first = [ln for ln in ipt("-S", "OUTPUT").stdout.splitlines() if ln.startswith("-A ")][:1]
-            if (have.returncode == 0 and first == ["-A OUTPUT -j " + FW_CHAIN]
+            if (have.returncode == 0 and first == ["-A OUTPUT -j " + FW_CHAIN] and _fw_done.get(tool) == rules
                     and sorted(re.findall(r"--uid-owner (\d+)", have.stdout)) == want):
                 continue
             log("updating %s: internet off for %s" % (tool, ", ".join(u["name"] for u in users) or "nobody"))
@@ -1077,11 +1094,152 @@ def net_sync():
             while ipt("-D", "OUTPUT", "-j", FW_CHAIN).returncode == 0:
                 pass
             done.append(ipt("-I", "OUTPUT", "1", "-j", FW_CHAIN).returncode == 0)   # ahead of any other rule
+            _fw_done[tool] = rules if all(done) else None
             ok = ok and all(done)
     except (OSError, subprocess.SubprocessError) as e:
         log("firewall error: %r" % e)
         return False
     return ok
+
+
+# --------------------------------------------- blocked websites, private windows
+
+SITE_RE = re.compile(r"^(?=.{4,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}$")
+SITES_MAX = 500
+FIREFOX_POLICIES = "/etc/firefox/policies/policies.json"
+# Chrome and its relatives read every file in these folders (only for the browsers installed)
+CHROME_POLICIES = {"google-chrome": "/etc/opt/chrome/policies/managed", "chromium": "/etc/chromium/policies/managed",
+                   "chromium-browser": "/etc/chromium-browser/policies/managed",
+                   "brave-browser": "/etc/brave/policies/managed", "microsoft-edge": "/etc/opt/edge/policies/managed"}
+WEB_TICK = 2
+_web_done = {"key": None}
+
+
+def site_of(text):
+    """The site a parent typed or picked: "https://www.YouTube.com/watch?v=1" -> "youtube.com"."""
+    t = str(text).strip().lower()
+    t = re.sub(r"^[a-z][a-z0-9+.-]*://", "", t)
+    t = re.split(r"[/?#:]", t, 1)[0].strip(".")
+    t = re.sub(r"^www\d*\.", "", t)
+    return t if SITE_RE.match(t) else None
+
+
+def web_policies(sites, private):
+    """What the browsers are told: (Firefox's policies, Chrome's policies)."""
+    ff = {"DNSOverHTTPS": {"Enabled": False, "Locked": True}}     # name lookups stay where the firewall sees them
+    ch = {"DnsOverHttpsMode": "off"}
+    if private:
+        ff["DisablePrivateBrowsing"] = True
+        ch["IncognitoModeAvailability"] = 1
+    if sites:
+        ff["WebsiteFilter"] = {"Block": ["*://*.%s/*" % x for x in sites]}
+        ch["URLBlocklist"] = list(sites)
+    return ff, ch
+
+
+def web_write(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + ".tmp", "w") as f:
+        json.dump(data, f, indent=1)
+    os.chmod(path + ".tmp", 0o644)
+    os.replace(path + ".tmp", path)
+
+
+def web_firefox(ff):
+    """Firefox has one policies file. One that was there before Curfew is kept aside and merged."""
+    keep = os.path.join(STATE_DIR, "firefox-policies.orig")
+    mine = os.path.join(STATE_DIR, "firefox-policies.mine")
+    have = None
+    with contextlib.suppress(OSError, ValueError):
+        with open(FIREFOX_POLICIES) as f:
+            have = json.load(f)
+    ours = None
+    with contextlib.suppress(OSError, ValueError):
+        with open(mine) as f:
+            ours = json.load(f)
+    if have is not None and have != ours and not os.path.exists(keep):
+        shutil.copyfile(FIREFOX_POLICIES, keep)
+    orig = None
+    with contextlib.suppress(OSError, ValueError):
+        with open(keep) as f:
+            orig = json.load(f)
+    if ff is None:
+        if os.path.exists(keep):
+            shutil.copyfile(keep, FIREFOX_POLICIES)
+            os.unlink(keep)
+        elif have is not None and have == ours:
+            os.unlink(FIREFOX_POLICIES)
+        with contextlib.suppress(OSError):
+            os.unlink(mine)
+        return
+    data = dict(orig or {})
+    data["policies"] = dict((orig or {}).get("policies") or {}, **ff)
+    web_write(FIREFOX_POLICIES, data)
+    web_write(mine, data)
+
+
+def web_sync(force=False):
+    """While a child (or nobody) is at the screen, the browsers get the parent's rules; while an
+    administrator is, they are taken away again. Browsers read them when they start."""
+    with state() as st:
+        pass
+    sites, private = st["web"].get("sites") or [], bool(st["web"].get("private"))
+    admins = {u["name"] for u in human_users() if u["admin"]}
+    admin_front = any(s["active"] and s["user"] in admins for s in sessions())
+    on = (sites or private) and not admin_front
+    key = json.dumps([sites, private]) if on else None
+    if key == _web_done["key"] and not force:
+        return
+    _web_done["key"] = key
+    ff, ch = web_policies(sites, private) if on else (None, None)
+    if DRY:
+        log("would set the browsers' rules: %s" % (json.dumps({"firefox": ff, "chrome": ch}) if on else "none"))
+        return
+    try:
+        if ff is not None or os.path.exists(FIREFOX_POLICIES):
+            web_firefox(ff)
+        for prog, folder in CHROME_POLICIES.items():
+            path = os.path.join(folder, "curfew.json")
+            if ch is not None and (shutil.which(prog) or os.path.isdir(os.path.dirname(os.path.dirname(folder)))):
+                web_write(path, ch)
+            elif ch is None:
+                with contextlib.suppress(OSError):
+                    os.unlink(path)
+        log("browser rules %s" % ("on: %d blocked sites, private windows %s" % (len(sites), "blocked" if private else "allowed") if on else "off"))
+    except OSError as e:
+        _web_done["key"] = None
+        log("could not set the browsers' rules: %r" % e)
+
+
+def web_loop():
+    while True:
+        try:
+            web_sync()
+        except Exception as e:
+            log("browser rules failed: %r" % e)
+        time.sleep(WEB_TICK)
+
+
+def op_web_set(req, st):
+    """The blocked websites of this computer ("sites", replaces the list) and whether children
+    may open private windows ("private": true blocks them). Administrators are never limited."""
+    with state(write=True) as s:
+        web = s["web"]
+        if "sites" in req:
+            raw = req["sites"]
+            if not isinstance(raw, list) or len(raw) > SITES_MAX:
+                return {"ok": False, "error": "bad_args"}
+            sites = [site_of(x) for x in raw]
+            if None in sites:
+                return {"ok": False, "error": "bad_site"}
+            web["sites"] = sorted(set(sites))
+        if "private" in req:
+            web["private"] = bool(req["private"])
+        out = dict(web)
+    log("websites: %d blocked, private windows %s" % (len(out["sites"]), "blocked" if out["private"] else "allowed"))
+    net_sync()
+    web_sync(force=True)
+    return {"ok": True, "web": out}
 
 
 # -------------------------------------------------------------- Wi-Fi stays on
@@ -1519,10 +1677,10 @@ def op_status(req, st):
             u["limit"] = limit_info(limit, seen, u["name"], now)
     t = st["timer"]
     timer = {"remaining": max(0, int(t["deadline"] - now)), "warn": bool(t.get("warn"))} if t else None
-    caps = (["seconds", "browsers", "usage", "watch", "limits"] + (["net"] if net_supported() else [])
+    caps = (["seconds", "browsers", "usage", "watch", "limits", "web"] + (["net"] if net_supported() else [])
             + (["login"] if login_hook() else []))
     return {"ok": True, "id": st["id"], "name": host_name(), "os": os_name(), "date": kept_days(now)[0],
-            "users": users, "timer": timer, "caps": caps, "dry": DRY}
+            "users": users, "timer": timer, "caps": caps, "dry": DRY, "web": st["web"]}
 
 
 def find_user(req):
@@ -1841,7 +1999,7 @@ def op_forget(req, st):
 OPS = {"status": op_status, "apps": op_apps, "browsers": op_browsers, "usage": op_usage, "poweroff": op_power, "reboot": op_power,
        "timer_set": op_timer_set, "timer_cancel": op_timer_cancel, "lock": op_lock,
        "logout": op_logout, "login": op_login, "net_set": op_net_set, "net_clear": op_net_clear,
-       "forget": op_forget, "watch": op_watch, "limit_set": op_limit_set, "limit_clear": op_limit_clear,
+       "forget": op_forget, "watch": op_watch, "limit_set": op_limit_set, "web_set": op_web_set, "limit_clear": op_limit_clear,
        "limit_extra": op_limit_extra, "limit_elsewhere": op_limit_elsewhere}
 
 
@@ -2009,6 +2167,7 @@ def serve():
         log("Curfew agent %s listening on port %d" % (st["id"], PORT))
     threading.Thread(target=timer_loop, daemon=True).start()
     threading.Thread(target=usage_loop, daemon=True).start()
+    threading.Thread(target=web_loop, daemon=True).start()
     if not DRY:
         threading.Thread(target=radio_loop, daemon=True).start()
         if shutil.which("journalctl"):

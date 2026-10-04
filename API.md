@@ -74,6 +74,7 @@ Unauthenticated refusals (HTTP 4xx, treat as hints only): `unknown_phone`, `bad_
 | `timer_set` | `seconds` (10-86400) or `minutes` (1-1440), `warn` (bool) | `timer` |
 | `timer_cancel` | | `timer: null` |
 | `lock`, `logout` | `user` | |
+| `web_set` | `sites`? (list, replaces the blocked websites; each is reduced to its site, `www.` dropped), `private`? (true: children get no private/incognito windows) | `web`: `{sites, private}`. Error `bad_site`. Applies to accounts that are not administrators: the firewall refuses those sites for them (TLS server name / HTTP Host, QUIC refused), and Firefox/Chrome policies (website filter, no private windows, no DNS over HTTPS) are in place while no administrator is the active session |
 | `login` | `user` | `how`: `unlocked` (an open session was brought to the screen and unlocked) or `approved` (the login screen lets this account in once, within `seconds`) |
 | `net_set` | `user`, `seconds` (0 = now, or 10-86400), `warn` | internet off for that account, now or after the countdown |
 | `net_clear` | `user` | internet back on, countdown cancelled |
@@ -87,7 +88,7 @@ Unauthenticated refusals (HTTP 4xx, treat as hints only): `unknown_phone`, `bad_
 `caps` lists what this agent can do: `seconds` (timers in seconds), `net` (iptables is present),
 `login` (the login screen is set up to ask the agent), `browsers` (the agent can read browser
 history), `usage` (the agent keeps screen time), `watch` (the `watch` op and events), `limits`
-(screen-time limits). An agent without `caps` is the first version. `status` also has `date`, the
+(screen-time limits), `web` (blocked websites, private windows; `status` then has `web`: `{sites, private}`). An agent without `caps` is the first version. `status` also has `date`, the
 computer's today (`2026-10-03`), and for an account with a limit, `limit` as below.
 
 Watching: a phone keeps one `watch` call open per computer. It is answered as soon as there are

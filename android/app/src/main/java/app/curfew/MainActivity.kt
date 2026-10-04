@@ -110,6 +110,7 @@ fun CurfewNav(repo: Repo) {
         composable("home") {
             HomeScreen(repo, snack, onOpen = { go("computer/$it") }, onAdd = { go("add") }, onAlerts = { go("alerts") }, onSettings = { go("settings") })
         }
+        composable("web/{id}") { entry -> WebScreen(repo, snack, entry.arguments?.getString("id").orEmpty(), onBack = ::back, onGone = ::home) }
         composable("settings") { SettingsScreen(repo, snack, onBack = ::back) }
         composable("alerts") {
             AlertsScreen(repo, snack, onBack = ::back, onOpen = { id, user -> go(if (user == null) "computer/$id" else "user/$id/${Uri.encode(user)}") })
@@ -120,7 +121,7 @@ fun CurfewNav(repo: Repo) {
         composable("computer/{id}") { entry ->
             val id = entry.arguments?.getString("id").orEmpty()
             ComputerScreen(repo, snack, id, onBack = ::back, onGone = ::home, onUser = { go("user/$id/${Uri.encode(it)}") },
-                onUsage = { go("usage/$id") })
+                onUsage = { go("usage/$id") }, onWeb = { go("web/$id") })
         }
         composable("user/{id}/{user}") { entry ->
             val id = entry.arguments?.getString("id").orEmpty()

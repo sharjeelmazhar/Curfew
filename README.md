@@ -236,3 +236,19 @@ python3 agent/curfew.py --dry-run pair       # in another: shows the QR code
 The apt folder is signed with the key in `.apt-key/`, which is not in git. Keep a copy of that folder: without it no update can be published that the laptops will accept, and anyone who has it can publish software that the laptops install as administrator.
 
 The app's signing key (`android/curfew-release.jks`) is created by the first build and is not in git. Keep it: an APK signed with a different key cannot update the installed app.
+
+## Blocked websites and private windows
+
+On a computer's page, **Blocked websites** lists the sites children cannot open. Type a site (for
+example `youtube.com`), or long-press a page in a browser's history and choose **Block**. A site is
+blocked with everything under it (`youtube.com` also blocks `www.youtube.com` and `m.youtube.com`).
+Some services use several addresses (YouTube also uses `youtu.be`); add each one. The switch
+**Block private windows** turns off private and incognito windows for children, so every page they
+open stays in the history. Administrators are never limited. Children's accounts also reach the
+internet over Wi-Fi only, not through a network cable.
+
+## Which phones and computers
+
+- Phone: Android 8.0 or newer (one app for every phone, Samsung's older ones included). No iPhone.
+- Computer: Ubuntu 24.04 or newer with the standard desktop. 22.04 may work but is not tested.
+- The phone and the computers must be on the same home Wi-Fi (a guest Wi-Fi usually keeps them apart).

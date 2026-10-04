@@ -11,6 +11,8 @@ import android.text.format.DateFormat
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -269,7 +271,7 @@ private fun ComputerCard(c: Computer, live: Live, tag: String?, seenAt: Long, on
 private enum class Ask { POWEROFF, REBOOT, REMOVE, RENAME, LOGOUT, NET_OFF }
 
 @Composable
-fun ComputerScreen(repo: Repo, snack: SnackbarHostState, id: String, onBack: () -> Unit, onGone: () -> Unit, onUser: (String) -> Unit, onUsage: () -> Unit) {
+fun ComputerScreen(repo: Repo, snack: SnackbarHostState, id: String, onBack: () -> Unit, onGone: () -> Unit, onUser: (String) -> Unit, onUsage: () -> Unit, onWeb: () -> Unit) {
     val store by repo.store.collectAsStateWithLifecycle()
     val liveMap by repo.live.collectAsStateWithLifecycle()
     val c = store.computers.find { it.id == id }
@@ -369,6 +371,7 @@ fun ComputerScreen(repo: Repo, snack: SnackbarHostState, id: String, onBack: () 
             if (live.status?.caps?.contains("usage") == true) item {
                 ScreenTimeLink("How long each account was used in the last 7 days, and when it logged in", onUsage)
             }
+            live.status?.takeIf { "web" in it.caps }?.let { st -> item { WebLink(st.web, onWeb) } }
         }
         item {
             Box(Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.Center) {
@@ -1162,6 +1165,23 @@ fun BrowserScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: St
             .onFailure { AppLock.away = false; scope.say(snack, "Could not open that page") }
     }
 
+    var blocking by remember { mutableStateOf<String?>(null) }
+    blocking?.let { site ->
+        val canBlock = live.status?.caps?.contains("web") == true
+        ConfirmSheet(
+            "Block $site?",
+            if (canBlock) "Children's accounts on ${c.title} will not be able to open $site or anything under it, in any browser."
+            else "Blocking websites needs a newer Curfew on ${c.title}.",
+            "Block",
+            onConfirm = {
+                blocking = null
+                val sites = live.status?.web?.sites.orEmpty()
+                if (canBlock && site !in sites) scope.launch { scope.say(snack, repo.setWeb(id, sites + site) ?: "$site is blocked") }
+                else if (canBlock) scope.say(snack, "$site is already blocked")
+            },
+            onDismiss = { blocking = null },
+        )
+    }
     Page(b?.name ?: "Websites", snack, onBack) {
         item {
             OutlinedTextField(
@@ -1179,23 +1199,24 @@ fun BrowserScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: St
             else -> {
                 item { SectionLabel("Open now") }
                 if (open.isEmpty()) item { Note(if (query.isBlank()) "No tabs open right now." else "No open tabs match “${query.trim()}”.") }
-                else items(open, key = { "o:" + it.url }) { WebRow(it, now, openInBrowser) }
+                else items(open, key = { "o:" + it.url }) { WebRow(it, now, openInBrowser) { blocking = mainSite(it.url) } }
 
                 item { SectionLabel("Recently visited") }
                 if (recent.isEmpty()) item { Note(if (query.isBlank()) "No history in the last 7 days." else "No pages match “${query.trim()}”.") }
-                else items(recent, key = { "r:" + it.url }) { WebRow(it, now, openInBrowser) }
+                else items(recent, key = { "r:" + it.url }) { WebRow(it, now, openInBrowser) { blocking = mainSite(it.url) } }
             }
         }
     }
 }
 
 @Composable
-private fun WebRow(e: WebEntry, nowSeconds: Long, onOpen: (WebEntry) -> Unit) {
+@OptIn(ExperimentalFoundationApi::class)
+private fun WebRow(e: WebEntry, nowSeconds: Long, onOpen: (WebEntry) -> Unit, onBlock: () -> Unit = {}) {
     val scheme = MaterialTheme.colorScheme
     val search = e.search.isNotBlank()
     Surface(shape = MaterialTheme.shapes.large, color = LocalExtra.current.card, modifier = Modifier.fillMaxWidth()) {
         Row(
-            Modifier.fillMaxWidth().clickable { onOpen(e) }.padding(12.dp),
+            Modifier.fillMaxWidth().combinedClickable(onLongClick = { if (e.url.isNotBlank()) onBlock() }) { onOpen(e) }.padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(

@@ -214,7 +214,7 @@ fun parseLimit(j: JSONObject?): LimitInfo? = j?.let {
  *  [date] is the computer's today ("2026-10-03"), empty from an older one. */
 data class Status(
     val name: String, val os: String, val users: List<UserInfo>, val timerSeconds: Int?, val warn: Boolean,
-    val caps: Set<String> = emptySet(), val date: String = "",
+    val caps: Set<String> = emptySet(), val date: String = "", val web: WebRules = WebRules(),
 ) {
     /** One line for the home card: who is in front of it, and who else is still logged in. */
     fun headline(nameOf: (UserInfo) -> String = { it.display }): String {
@@ -275,7 +275,31 @@ fun parseStatus(j: JSONObject): Status {
         warn = t?.optBoolean("warn") ?: false,
         caps = (j.optJSONArray("caps") ?: JSONArray()).let { c -> (0 until c.length()).map { c.optString(it) }.toSet() },
         date = j.optString("date"),
+        web = j.optJSONObject("web")?.let { w ->
+            WebRules((w.optJSONArray("sites") ?: JSONArray()).let { a -> (0 until a.length()).map { a.optString(it) } }, w.optBoolean("private"))
+        } ?: WebRules(),
     )
+}
+
+/** The websites children cannot open on a computer, and whether private windows are blocked there. */
+data class WebRules(val sites: List<String> = emptyList(), val private: Boolean = false)
+
+private val SITE = Regex("^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z][a-z0-9-]{0,62}$")
+
+/** What the parent typed, as a site: "https://www.YouTube.com/watch?v=1" -> "youtube.com"; null if it is not one. */
+fun siteOf(text: String): String? {
+    var t = text.trim().lowercase().replace(Regex("^[a-z][a-z0-9+.-]*://"), "")
+    t = t.split('/', '?', '#', ':').first().trim('.').replace(Regex("^www\\d*\\."), "")
+    return t.takeIf { SITE.matches(it) }
+}
+
+/** The main site of a page, for blocking it with everything under it: "m.youtube.com" -> "youtube.com",
+ *  "news.bbc.co.uk" -> "bbc.co.uk". */
+fun mainSite(url: String): String? {
+    val host = siteOf(url) ?: return null
+    val parts = host.split('.')
+    val country = parts.last().length == 2 && parts.size >= 3 && parts[parts.size - 2] in setOf("co", "com", "org", "net", "gov", "edu", "ac", "gob", "or", "ne")
+    return parts.takeLast(if (country) 3 else 2).joinToString(".")
 }
 
 fun parseApps(j: JSONObject): List<AppInfo> {
@@ -603,6 +627,7 @@ fun formatAge(seconds: Long): String = when {
 
 fun errorText(error: String): String = when (error) {
     "not_logged_in" -> "That account is not logged in"
+    "bad_site" -> "That is not a website address"
     "bad_user" -> "That account no longer exists"
     "is_admin" -> "That cannot be done for an admin account"
     "no_limit" -> "That account has no daily limit"

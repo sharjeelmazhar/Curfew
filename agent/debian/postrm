@@ -21,5 +21,14 @@ if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "787/tcp"; then
   ufw delete allow 787/tcp >/dev/null 2>&1 || true
 fi
 [ -d /run/systemd/system ] && systemctl daemon-reload || true
+# browser rules (blocked websites, private windows): Firefox's own file comes back as it was
+if [ -f /var/lib/curfew/firefox-policies.orig ]; then
+  cp /var/lib/curfew/firefox-policies.orig /etc/firefox/policies/policies.json && rm -f /var/lib/curfew/firefox-policies.orig
+elif [ -f /var/lib/curfew/firefox-policies.mine ] && cmp -s /var/lib/curfew/firefox-policies.mine /etc/firefox/policies/policies.json; then
+  rm -f /etc/firefox/policies/policies.json
+fi
+rm -f /var/lib/curfew/firefox-policies.mine /etc/opt/chrome/policies/managed/curfew.json /etc/chromium/policies/managed/curfew.json \
+  /etc/chromium-browser/policies/managed/curfew.json /etc/brave/policies/managed/curfew.json /etc/opt/edge/policies/managed/curfew.json
+
 if [ "$1" = purge ]; then rm -rf /var/lib/curfew; fi
 exit 0

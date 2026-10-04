@@ -529,6 +529,17 @@ try:
     agent = start(fake=kids)
     kids_set(dad="none", gaming="active")
     time.sleep(2.5)
+    # blocked websites and private windows
+    check("a typed address becomes its site", [curfew.site_of(x) for x in ("https://www.YouTube.com/watch?v=1", "discord.gg", "youtube.com:443/a", "bad", "http://x")]
+          == ["youtube.com", "discord.gg", "youtube.com", None, None])
+    ff, ch = curfew.web_policies(["youtube.com"], True)
+    check("browsers are told the sites and no private windows", ff["WebsiteFilter"]["Block"] == ["*://*.youtube.com/*"] and ff["DisablePrivateBrowsing"]
+          and ch["URLBlocklist"] == ["youtube.com"] and ch["IncognitoModeAvailability"] == 1)
+    check("the firewall refuses a blocked site for the account", any("youtube.com" in r for r in curfew.fw_sites(1001, ["youtube.com"])[1]) and curfew.fw_sites(1001, []) == [])
+    r = call(a, "web_set", sites=["https://www.YouTube.com/x", "discord.com", "discord.com"], private=True)[1]
+    check("sites are kept by their name, once", r == {"ok": True, "web": {"sites": ["discord.com", "youtube.com"], "private": True}})
+    check("a bad site is refused", call(a, "web_set", sites=["not a site"])[1] == {"ok": False, "error": "bad_site"})
+    check("status tells the sites", call(a, "status")[1]["web"]["sites"] == ["discord.com", "youtube.com"] and "web" in call(a, "status")[1]["caps"])
     check("no limit for an admin", call(a, "limit_set", user="dad", minutes=60)[1] == {"ok": False, "error": "is_admin"})
     check("no limit for an unknown account", call(a, "limit_set", user="x", minutes=60)[1] == {"ok": False, "error": "bad_user"})
     check("bad limits are refused", all(call(a, "limit_set", user="gaming", **k)[1] == {"ok": False, "error": "bad_args"} for k in
