@@ -1,9 +1,13 @@
 #!/bin/sh
 # Installed by Curfew as an ExecCondition of GNOME's radio service (gsd-rfkill), which is what
-# shows the airplane-mode switch. The login screen runs as a dynamic user (uid 60000 and up, no
-# shell) and may not have it, so nobody at the login screen can cut the Wi-Fi. Everyone else keeps it
-# (children's switch is hidden by Curfew's GNOME Shell add-on instead).
+# shows airplane mode (top-right menu, Settings > Wi-Fi) and switches Bluetooth on and off.
+# Only administrators get it: not the login screen (a dynamic user, uid 60000 and up, or an
+# account without a shell) and not children, so nobody else can cut the Wi-Fi even for a moment.
 uid="$(id -u)"
 [ "$uid" -ge 60000 ] && exit 1
 case "$(getent passwd "$uid" | cut -d: -f7)" in */nologin|*/false) exit 1 ;; esac
-exit 0
+[ "$uid" -lt 1000 ] && exit 0
+for g in $(id -Gn "$uid" 2>/dev/null); do
+  case "$g" in sudo|admin) exit 0 ;; esac
+done
+exit 1
