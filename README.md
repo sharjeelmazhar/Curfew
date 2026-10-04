@@ -104,7 +104,7 @@ On an account's page, under **Websites**, you see each browser the person has us
 
 This reads the browser's own history on the laptop, so it works even when the person is not logged in at that moment, as long as the laptop is on and at home. Clearing the browser history clears it here too.
 
-What it cannot show: **private or incognito windows**. Browsers write nothing to disk for those, so there is nothing to read — the honest way to handle them is to switch private windows off, which can be added later. Open tabs are read exactly for Firefox; for Chrome they are shown as "the last few minutes", because Chrome does not let anything read its open tabs. Other browsers (Brave, Edge, Tor) are not read.
+What it cannot show: **private or incognito windows**. Browsers write nothing to disk for those, so there is nothing to read; switch them off with **Block private windows** (below). Curfew keeps its own copy of a child's history for 7 days, so clearing the history in the browser does not hide it from the phone. Open tabs are read exactly for Firefox; for Chrome they are shown as "the last few minutes", because Chrome does not let anything read its open tabs. Other browsers (Brave, Edge, Tor) are not read.
 
 The list travels over the home Wi-Fi signed but **not encrypted**, the same as everything else Curfew sends, so treat it as private to the home network.
 
