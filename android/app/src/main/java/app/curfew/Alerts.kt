@@ -51,7 +51,6 @@ object Alerts {
         if (!allowed(context)) return
         val n = NotificationCompat.Builder(context, channel(context, e.kind))
             .setSmallIcon(R.drawable.ic_mark).setContentTitle(e.title).setContentText(e.text)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(e.text))
             .setWhen(e.at * 1000).setShowWhen(true).setAutoCancel(true).setContentIntent(openList(context))
             .setPriority(NotificationCompat.PRIORITY_HIGH).setCategory(NotificationCompat.CATEGORY_STATUS)
             .build()

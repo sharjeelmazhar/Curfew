@@ -293,9 +293,8 @@ class Repo(private val app: Context) {
         }
         if (news.isEmpty()) return
         writeMemory()                   // never announce the same login twice, even if the app is closed now
-        val (zone, h24) = Alerts.clock(app)
         for (l in news) {
-            val (title, text) = loginAlert(nameOf(c, l.user), c.title, l.start, System.currentTimeMillis() / 1000, zone, h24)
+            val (title, text) = loginAlert(nameOf(c, l.user), c.title, l.how)
             alert(AlertEntry("${c.id}/login/${l.user}/${l.start}", c.id, l.user, AlertKind.LOGIN, l.start, title, text), _store.value.prefs.logins)
         }
     }
@@ -322,6 +321,12 @@ class Repo(private val app: Context) {
     }
 
     @Synchronized
+    fun removeAlert(id: String) {
+        _alerts.value = _alerts.value.filter { it.id != id }
+        alertsFile.write(alertsToJson(_alerts.value))
+        runCatching { app.getSystemService(android.app.NotificationManager::class.java).cancel(id.hashCode()) }
+    }
+
     fun clearAlerts() {
         _alerts.value = emptyList()
         alertsFile.write(alertsToJson(emptyList()))
@@ -335,7 +340,7 @@ class Repo(private val app: Context) {
         val now = System.currentTimeMillis() / 1000
         val (zone, h24) = Alerts.clock(app)
         val prefs = _store.value.prefs
-        announce(c, w.events.filter { it.type == "login" && it.user != null }.map { LoginSeen(it.user!!, it.start) })
+        announce(c, w.events.filter { it.type == "login" && it.user != null }.map { LoginSeen(it.user!!, it.start, it.how) })
         for (e in w.events) {
             val id = "${c.id}/${w.epoch}/${e.seq}"
             when (e.type) {

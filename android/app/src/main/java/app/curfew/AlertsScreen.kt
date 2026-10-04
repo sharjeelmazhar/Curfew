@@ -1,6 +1,7 @@
 package app.curfew
 
 import android.Manifest
+import androidx.compose.material.icons.rounded.Close
 import android.annotation.SuppressLint
 import android.content.ComponentName
 import android.content.Context
@@ -86,6 +87,13 @@ object Background {
         }.onFailure { appSettings(context) }
     }
 
+    /** Whether Xiaomi's Autostart is on for Curfew: true or false, or null if the phone does not say. */
+    fun autostartOn(context: Context): Boolean? = runCatching {
+        val ops = context.getSystemService(Context.APP_OPS_SERVICE) as android.app.AppOpsManager
+        val check = android.app.AppOpsManager::class.java.getMethod("checkOpNoThrow", Int::class.java, Int::class.java, String::class.java)
+        (check.invoke(ops, 10008, android.os.Process.myUid(), context.packageName) as Int) == android.app.AppOpsManager.MODE_ALLOWED
+    }.getOrNull()
+
     fun appSettings(context: Context) {
         AppLock.away = true
         runCatching { context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + context.packageName))) }
@@ -115,11 +123,13 @@ fun AlertsScreen(repo: Repo, snack: SnackbarHostState, onBack: () -> Unit, onOpe
     var clearing by remember { mutableStateOf(false) }
     var allowed by remember { mutableStateOf(Alerts.allowed(context)) }
     var free by remember { mutableStateOf(Background.free(context)) }
+    var autostart by remember { mutableStateOf(Background.autostartOn(context)) }
     var asked by rememberSaveable { mutableStateOf(false) }
     val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { allowed = it; asked = true }
     Every(2000) {
         allowed = Alerts.allowed(context)
         free = Background.free(context)
+        autostart = Background.autostartOn(context)
     }
     val (zone, h24) = clock()
     val now = System.currentTimeMillis() / 1000
@@ -158,9 +168,9 @@ fun AlertsScreen(repo: Repo, snack: SnackbarHostState, onBack: () -> Unit, onOpe
                 item(key = "list:$day") {
                     Card(padding = 8.dp) {
                         list.forEachIndexed { i, a ->
-                            if (i > 0) HorizontalDivider(Modifier.padding(start = 68.dp, end = 12.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                            if (i > 0) HorizontalDivider(Modifier.padding(start = 60.dp, end = 12.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                             val known = store.computers.any { it.id == a.computerId }
-                            AlertRow(a, a.id in fresh, formatClock(a.at, zone, h24), if (known) ({ onOpen(a.computerId, a.user) }) else null)
+                            AlertRow(a, a.id in fresh, formatClock(a.at, zone, h24), if (known) ({ onOpen(a.computerId, a.user) }) else null) { repo.removeAlert(a.id) }
                         }
                     }
                 }
@@ -189,7 +199,7 @@ fun AlertsScreen(repo: Repo, snack: SnackbarHostState, onBack: () -> Unit, onOpe
                     Spacer(Modifier.size(12.dp))
                     BigButton("Let Curfew run in the background", Icons.Rounded.BatteryAlert, { Background.ask(context) }, Modifier.fillMaxWidth(), primary = true)
                 }
-                if (Background.xiaomi) {
+                if (Background.xiaomi && autostart != true) {
                     Spacer(Modifier.size(12.dp))
                     Text(
                         "On Xiaomi, Redmi and POCO phones, also turn on Autostart for Curfew. Otherwise the phone stops Curfew when it is swiped away from the recent apps.",
@@ -209,7 +219,7 @@ fun AlertsScreen(repo: Repo, snack: SnackbarHostState, onBack: () -> Unit, onOpe
 }
 
 @Composable
-private fun AlertRow(a: AlertEntry, new: Boolean, time: String, onClick: (() -> Unit)?) {
+private fun AlertRow(a: AlertEntry, new: Boolean, time: String, onClick: (() -> Unit)?, onRemove: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     val (icon: ImageVector, bg, fg) = when (a.kind) {
         AlertKind.LOGIN -> Triple(Icons.AutoMirrored.Rounded.Login, scheme.secondaryContainer, scheme.onSecondaryContainer)
@@ -220,13 +230,13 @@ private fun AlertRow(a: AlertEntry, new: Boolean, time: String, onClick: (() -> 
         Modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium).let { if (onClick != null) it.clickable(onClick = onClick) else it }.padding(12.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        Box(Modifier.size(44.dp).clip(CircleShape).background(bg), contentAlignment = Alignment.Center) {
-            Icon(icon, null, Modifier.size(22.dp), tint = fg)
+        Box(Modifier.size(36.dp).clip(CircleShape).background(bg), contentAlignment = Alignment.Center) {
+            Icon(icon, null, Modifier.size(18.dp), tint = fg)
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(a.title, style = MaterialTheme.typography.titleMedium.copy(fontWeight = if (new) FontWeight.Bold else FontWeight.SemiBold))
-            Text(a.text, style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
+            Text(a.title, style = MaterialTheme.typography.titleSmall.copy(fontWeight = if (new) FontWeight.Bold else FontWeight.SemiBold))
+            Text(a.text, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
         }
         Spacer(Modifier.width(8.dp))
         Column(horizontalAlignment = Alignment.End) {
@@ -235,6 +245,9 @@ private fun AlertRow(a: AlertEntry, new: Boolean, time: String, onClick: (() -> 
                 Spacer(Modifier.size(6.dp))
                 Box(Modifier.size(10.dp).clip(CircleShape).background(scheme.primary))
             }
+        }
+        IconButton(onClick = onRemove, modifier = Modifier.size(32.dp).padding(start = 4.dp)) {
+            Icon(Icons.Rounded.Close, contentDescription = "Remove", Modifier.size(18.dp), tint = scheme.onSurfaceVariant)
         }
     }
 }

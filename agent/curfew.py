@@ -914,8 +914,28 @@ def usage_look(users=None):
         SEEN["dirty"] = SEEN["dirty"] or json.dumps(SEEN["data"]["users"], sort_keys=True) != before
         seen = json.loads(json.dumps(SEEN["data"]))
     for name, start in logins:              # the phones hear of it at once
-        event_add("login", user=name, start=start)
+        how = how_of(name, start)
+        event_add("login", user=name, start=start, **({"how": how} if how else {}))
     return seen
+
+
+def how_mark(name, how):
+    """Notes how an account was let in at the login screen: "phone" or "password"."""
+    with contextlib.suppress(OSError):
+        os.makedirs(os.path.join(RUN_DIR, "how"), exist_ok=True)
+        with open(os.path.join(RUN_DIR, "how", name), "w") as f:
+            f.write(how)
+
+
+def how_of(name, start):
+    """How the login that began at [start] was let in, if the login screen said so close to then."""
+    path = os.path.join(RUN_DIR, "how", name)
+    with contextlib.suppress(OSError):
+        if abs(os.stat(path).st_mtime - start) <= 120:
+            with open(path) as f:
+                how = f.read().strip()
+            return how if how in ("phone", "password") else None
+    return None
 
 
 def sessions_mark():
@@ -1475,6 +1495,9 @@ def op_status(req, st):
         u.pop("since", None)
         if u["state"] != "none" and mine["logins"] and mine["logins"][-1][1] is None:
             u["since"] = mine["logins"][-1][0]
+            how = how_of(u["name"], u["since"])
+            if how:
+                u["how"] = how
         u["today"] = int(mine["days"].get(kept_days(now)[0], {}).get("used", 0))
         e = st["net"].get(u["name"]) or {}
         u["net"] = "off" if e.get("blocked") and not u["admin"] else "on"
@@ -1678,6 +1701,7 @@ def cmd_pam_remember():
     if os.environ.get("PAM_TYPE") != "auth" or not find_user({"user": name}):
         return 1
     secret = sys.stdin.buffer.read(4096).split(b"\0")[0].decode(errors="surrogateescape")
+    how_mark(name, "password")
     if secret:
         passwords(lambda known: known.update({name: secret}))
     return 0
@@ -1748,6 +1772,7 @@ def cmd_pam_login():
     if expires < time.time():
         return 1
     log("let %s in without a password (approved from a phone)" % name)
+    how_mark(name, "phone")
     return 0
 
 
