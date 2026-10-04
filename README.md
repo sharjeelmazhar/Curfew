@@ -245,7 +245,7 @@ blocked with everything under it (`youtube.com` also blocks `www.youtube.com` an
 child's page has its own **Blocked websites** too, for sites only that account may not open.
 Some services use several addresses (YouTube also uses `youtu.be`); add each one. The switch
 **Block private windows** turns off private and incognito windows for children, so every page they
-open stays in the history. Administrators are never limited. Children's accounts also reach the
+open stays in the history. Administrators are never limited. The airplane-mode switch is hidden in children's accounts and on the login screen. Children's accounts also reach the
 internet over Wi-Fi only, not through a network cable.
 
 ## Which phones and computers

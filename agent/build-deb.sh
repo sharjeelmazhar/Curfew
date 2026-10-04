@@ -18,6 +18,11 @@ install -m 644 "$HERE/debian/curfew-archive-keyring.gpg" "$P/usr/share/keyrings/
 install -m 644 "$HERE/../README.md" "$P/usr/share/doc/curfew/README.md"
 install -m 755 "$HERE/debian/curfew-sleep" "$P/usr/lib/systemd/system-sleep/curfew"
 install -m 755 "$HERE/debian/curfew-env" "$P/usr/lib/systemd/user-environment-generators/90-curfew"
+# no airplane-mode switch on the login screen: GNOME's radio service does not start there
+install -D -m 755 "$HERE/debian/curfew-rfkill-allowed" "$P/usr/lib/curfew/rfkill-allowed"
+install -d "$P/usr/lib/systemd/user/org.gnome.SettingsDaemon.Rfkill.service.d"
+printf '[Service]\nExecCondition=/usr/lib/curfew/rfkill-allowed\n' > "$P/usr/lib/systemd/user/org.gnome.SettingsDaemon.Rfkill.service.d/curfew.conf"
+chmod 644 "$P/usr/lib/systemd/user/org.gnome.SettingsDaemon.Rfkill.service.d/curfew.conf"
 install -m 644 "$HERE/gnome/metadata.json" "$HERE/gnome/extension.js" "$P/usr/share/gnome-shell/extensions/$EXT/"
 cat > "$P/usr/bin/curfew" <<'WRAP'
 #!/bin/sh
