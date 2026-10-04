@@ -70,12 +70,12 @@ fun LimitCard(repo: Repo, c: Computer, u: UserInfo, name: String, enabled: Boole
             Column(Modifier.weight(1f)) {
                 Text(if (l == null) "No daily limit" else "Daily limit: " + formatMinutes(l.minutes), style = MaterialTheme.typography.titleMedium)
                 Text(
-                    if (l == null) "Set how long $name may use the computer each day" else limitAction(l.action) + " when the time is up",
+                    boldNames(if (l == null) "Set how long ${bold(name)} may use the computer each day" else limitAction(l.action) + " when the time is up"),
                     style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant,
                 )
                 val others = store.sharedOf(Account(c.id, u.name))?.members?.minus(Account(c.id, u.name)).orEmpty()
                 if (others.isNotEmpty()) Text(
-                    "Shared with " + others.joinToString(", ") { accountName(store, live, it) },
+                    boldNames("Shared with " + others.joinToString(", ") { accountName(store, live, it) }),
                     style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant, maxLines = 3, overflow = TextOverflow.Ellipsis,
                 )
             }
@@ -124,7 +124,7 @@ fun LimitCard(repo: Repo, c: Computer, u: UserInfo, name: String, enabled: Boole
 fun accountName(store: StoreData, live: Map<String, Live>, a: Account): String {
     val c = store.computers.find { it.id == a.computerId } ?: return a.user
     val name = c.userAliases[a.user] ?: live[a.computerId]?.status?.users?.find { it.name == a.user }?.display ?: a.user
-    return "$name on ${c.title}"
+    return "${bold(name)} on ${c.title}"
 }
 
 /** Setting, changing or removing an account's daily screen-time limit. */
@@ -181,7 +181,7 @@ fun LimitScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: Stri
     ) {
         item {
             Text(
-                "How long $name may use ${c.title} each day. Time counts while $name is on the screen with it unlocked.",
+                boldNames("How long ${bold(name)} may use ${c.title} each day. Time counts while ${bold(name)} is on the screen with it unlocked."),
                 style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 4.dp),
             )
         }
@@ -204,10 +204,10 @@ fun LimitScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: Stri
         item {
             Card(padding = 8.dp) {
                 Text("When the time is up", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(start = 12.dp, top = 12.dp, end = 12.dp))
-                Choice("Shut down the computer", "If someone else is on the screen by then, only $name is logged out.", action == "poweroff") { action = "poweroff" }
-                Choice("Log $name out", "Everything $name has open is closed. The computer stays on.", action == "logout") { action = "logout" }
+                Choice("Shut down the computer", "If someone else is on the screen by then, only ${bold(name)} is logged out.", action == "poweroff") { action = "poweroff" }
+                Choice("Log ${bold(name)} out", "Everything ${bold(name)} has open is closed. The computer stays on.", action == "logout") { action = "logout" }
                 Text(
-                    "$name gets a notice on the screen first, and a minute to save their work.",
+                    boldNames("${bold(name)} gets a notice on the screen first, and a minute to save their work."),
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
                 )
@@ -215,7 +215,7 @@ fun LimitScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: Stri
         }
         item {
             Card(padding = 8.dp) {
-                PrefRow("Warn $name first", "A notice on the computer 5 minutes and 1 minute before", warn) { warn = it }
+                PrefRow("Warn ${bold(name)} first", "A notice on the computer 5 minutes and 1 minute before", warn) { warn = it }
                 PrefRow("Tell me when the time is up", "A notification on this phone", tell) { tell = it }
             }
         }
@@ -244,7 +244,7 @@ fun LimitScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: Stri
                     ) {
                         Checkbox(checked = on, onCheckedChange = null, modifier = Modifier.padding(horizontal = 8.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(accountName(store, liveMap, a), style = MaterialTheme.typography.bodyLarge)
+                            Text(boldNames(accountName(store, liveMap, a)), style = MaterialTheme.typography.bodyLarge)
                             if (other != null) Text(
                                 "Now shares another limit; choosing it here moves it to this one",
                                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -305,8 +305,8 @@ private fun Choice(title: String, text: String, chosen: Boolean, onClick: () -> 
     ) {
         RadioButton(selected = chosen, onClick = null, modifier = Modifier.padding(horizontal = 8.dp))
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
-            Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(boldNames(title), style = MaterialTheme.typography.bodyLarge)
+            Text(boldNames(text), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

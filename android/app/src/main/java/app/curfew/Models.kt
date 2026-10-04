@@ -324,7 +324,7 @@ data class DayUse(val date: String, val used: Int, val on: Int)
 /** One login, from [start] to [end] (unix seconds); [end] is null while still logged in. */
 data class LoginSpan(val start: Long, val end: Long?)
 
-/** Screen time of one account: [days] is today then yesterday, [logins] newest first. */
+/** Screen time of one account: [days] is today then the days before (up to 7), [logins] newest first. */
 data class UserUsage(
     val name: String, val state: UserState, val bootUsed: Int, val days: List<DayUse>, val logins: List<LoginSpan>,
 ) {
