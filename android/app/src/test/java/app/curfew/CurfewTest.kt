@@ -392,6 +392,8 @@ class CurfewTest {
         val home = NetInfo(true, listOf("192.168.1.7" to 24))
         assertEquals(Link.OFF, diagnose(home, "192.168.1.20", false))
         assertEquals(Link.NOT_RUNNING, diagnose(home, "192.168.1.20", true))
+        assertEquals(Link.OFF, diagnose(NetInfo(false, emptyList()), "100.100.101.1", false))
+        assertTrue(isTailnet("100.64.0.1") && isTailnet("100.127.255.254") && !isTailnet("100.128.0.1") && !isTailnet("192.168.1.12"))
         assertEquals(Link.OTHER_WIFI, diagnose(NetInfo(true, listOf("10.0.0.5" to 24)), "192.168.1.20", false))
         assertEquals(Link.NO_WIFI, diagnose(NetInfo(false, emptyList()), "192.168.1.20", false))
         assertTrue(inSubnet("192.168.1.20", "192.168.0.7", 16))

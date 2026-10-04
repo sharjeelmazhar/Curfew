@@ -176,6 +176,18 @@ using the number (or the name) from the list. That phone can no longer control t
 
 After installing, only an admin account can change the network. In the other accounts the network switches and settings simply do nothing; they do not ask for a password, so your password is never typed in a child's account. To join a new Wi-Fi, log in to your admin account and connect as usual; the network is then available in every account. To give everyone that freedom back: `sudo rm /etc/polkit-1/rules.d/10-curfew-network.rules`.
 
+## Using it away from home (Tailscale)
+
+Normally the phone reaches the laptop only over the home Wi-Fi. With [Tailscale](https://tailscale.com) (free for a family) it works from anywhere: mobile data, another Wi-Fi, another city, and also when the laptop is on a different Wi-Fi. Notifications and every control work the same way.
+
+1. Make a Tailscale account (for example with Google).
+2. On the laptop: `curl -fsSL https://tailscale.com/install.sh | sh`, then `sudo tailscale up` and open the link it prints. `tailscale ip -4` shows the laptop's address, which starts with `100.`. In the Tailscale admin page (login.tailscale.com), under Machines, choose **Disable key expiry** for the laptop.
+3. On your phone: install the Tailscale app, log in with the same account, and turn on **Always-on VPN** for it in the phone's settings (Connections > VPN). Only traffic to your own devices goes through it; your normal internet is not slowed down.
+4. Other parents use their own account: in the admin page, **Share** the laptop and send them the link. They install Tailscale, log in, accept the link and turn on Always-on VPN.
+5. In the Curfew app, remove the laptop, run `sudo curfew pair` on it, and add it again with **type the address**: the `100.` address followed by `:787` (do not scan the code; it holds the home address).
+
+If Tailscale is switched off on the phone, or the laptop has no internet, the laptop cannot be reached from outside.
+
 ## After reinstalling Ubuntu on a laptop
 
 Install the service again (step 1) and pair again (step 3). In the app the old entry shows **Needs pairing again**; remove it.

@@ -413,7 +413,8 @@ class Repo(private val app: Context) {
     }
 
     private fun endpoints(id: String, host: String, port: Int) =
-        (listOfNotNull(discovery.found.value[id]) + Endpoint(host, port)).distinct()
+        if (isTailnet(host)) listOf(Endpoint(host, port))
+        else (listOfNotNull(discovery.found.value[id]) + Endpoint(host, port)).distinct()
 
     /** Tries the discovered address first, then the last known one. */
     private fun reach(c: Computer, payload: JSONObject, waitMs: Int = 0): Pair<Reply, Endpoint> {
