@@ -182,11 +182,13 @@ Normally the phone reaches the laptop only over the home Wi-Fi. With [Tailscale]
 
 1. Make a Tailscale account (for example with Google).
 2. On the laptop: `curl -fsSL https://tailscale.com/install.sh | sh`, then `sudo tailscale up` and open the link it prints. `tailscale ip -4` shows the laptop's address, which starts with `100.`. In the Tailscale admin page (login.tailscale.com), under Machines, choose **Disable key expiry** for the laptop.
-3. On your phone: install the Tailscale app, log in with the same account, and turn on **Always-on VPN** for it in the phone's settings (Connections > VPN). Only traffic to your own devices goes through it; your normal internet is not slowed down.
-4. Other parents use their own account: in the admin page, **Share** the laptop and send them the link. They install Tailscale, log in, accept the link and turn on Always-on VPN.
+3. On your phone: install the Tailscale app and log in with the same account. Only traffic to your own devices goes through it; your normal internet is not slowed down. Choose one:
+   - **Always on** (Always-on VPN for Tailscale in the phone's settings, under Connections > VPN): notifications reach you everywhere.
+   - **Only when needed**: add the Tailscale tile to the quick settings and tap it when you are away. At home the app talks to the laptop over the Wi-Fi either way. While Tailscale is off and you are away, no notifications arrive; the ones you missed in the last 3 days show under the bell once you turn it on.
+4. Other parents use their own account: in the admin page, **Share** the laptop and send them the link. They install Tailscale, log in and accept the link.
 5. In the Curfew app, remove the laptop, run `sudo curfew pair` on it, and add it again with **type the address**: the `100.` address followed by `:787` (do not scan the code; it holds the home address).
 
-If Tailscale is switched off on the phone, or the laptop has no internet, the laptop cannot be reached from outside.
+Away from home the app says when Tailscale is off on the phone. If Tailscale is on and the laptop still does not answer, it is most likely shut down or has no internet.
 
 ## After reinstalling Ubuntu on a laptop
 
