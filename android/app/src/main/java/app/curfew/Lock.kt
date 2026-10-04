@@ -42,6 +42,9 @@ import androidx.fragment.app.FragmentActivity
 /** The app opens only for the owner of the phone: it locks whenever it leaves the screen and
  *  asks for a fingerprint when it comes back. */
 object AppLock {
+    /** The owner turned the lock off in Settings (asking for the fingerprint to do so). */
+    @Volatile var off = false
+    private val on get() = !BuildConfig.NO_LOCK && !off
     var locked by mutableStateOf(!BuildConfig.NO_LOCK)
     /** Counts the times the app came to the front, so the lock screen asks once each time. */
     var visit by mutableIntStateOf(0)
@@ -52,12 +55,12 @@ object AppLock {
 
     fun onStop() {
         stoppedAt = SystemClock.elapsedRealtime()
-        if (!away && !BuildConfig.NO_LOCK) locked = true
+        if (!away && on) locked = true
     }
 
     fun onStart(guard: Guard) {
-        if (away && SystemClock.elapsedRealtime() - stoppedAt > 60_000 && !BuildConfig.NO_LOCK) locked = true
-        if (guard == Guard.NONE) locked = false
+        if (away && SystemClock.elapsedRealtime() - stoppedAt > 60_000 && on) locked = true
+        if (guard == Guard.NONE || !on) locked = false
         away = false
         visit++
     }

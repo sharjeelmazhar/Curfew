@@ -51,6 +51,7 @@ import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.QrCodeScanner
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.WifiOff
@@ -139,7 +140,7 @@ fun secondsLeft(endsAt: Long?): Int? {
 // ------------------------------------------------------------------ home
 
 @Composable
-fun HomeScreen(repo: Repo, snack: SnackbarHostState, onOpen: (String) -> Unit, onAdd: () -> Unit, onAlerts: () -> Unit) {
+fun HomeScreen(repo: Repo, snack: SnackbarHostState, onOpen: (String) -> Unit, onAdd: () -> Unit, onAlerts: () -> Unit, onSettings: () -> Unit) {
     val store by repo.store.collectAsStateWithLifecycle()
     val live by repo.live.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -165,7 +166,10 @@ fun HomeScreen(repo: Repo, snack: SnackbarHostState, onOpen: (String) -> Unit, o
     Page(
         "Curfew", snack,
         bottomBar = { BottomAction { BigButton("Add computer", Icons.Rounded.Add, onAdd, Modifier.fillMaxWidth(), primary = true) } },
-        actions = { AlertsButton(unread, onAlerts) },
+        actions = {
+            IconButton(onClick = onSettings) { Icon(Icons.Rounded.Settings, contentDescription = "Settings") }
+            AlertsButton(unread, onAlerts)
+        },
     ) {
         if (store.computers.isEmpty()) item { EmptyHome() }
         if (BuildConfig.NO_LOCK) item { Note("Test version: the fingerprint lock is off. Do not give this version to anyone.") }

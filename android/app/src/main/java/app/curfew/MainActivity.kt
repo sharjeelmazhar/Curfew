@@ -47,6 +47,8 @@ class MainActivity : FragmentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         if (savedInstanceState == null) take(intent)
+        AppLock.off = !repo.store.value.prefs.lock
+        if (AppLock.off) AppLock.locked = false
         setContent {
             CurfewTheme {
                 if (AppLock.locked) LockScreen(::unlock)
@@ -106,8 +108,9 @@ fun CurfewNav(repo: Repo) {
         popExitTransition = { fadeOut(tween(150)) + slideOutHorizontally(tween(220)) { it / 10 } },
     ) {
         composable("home") {
-            HomeScreen(repo, snack, onOpen = { go("computer/$it") }, onAdd = { go("add") }, onAlerts = { go("alerts") })
+            HomeScreen(repo, snack, onOpen = { go("computer/$it") }, onAdd = { go("add") }, onAlerts = { go("alerts") }, onSettings = { go("settings") })
         }
+        composable("settings") { SettingsScreen(repo, snack, onBack = ::back) }
         composable("alerts") {
             AlertsScreen(repo, snack, onBack = ::back, onOpen = { id, user -> go(if (user == null) "computer/$id" else "user/$id/${Uri.encode(user)}") })
         }

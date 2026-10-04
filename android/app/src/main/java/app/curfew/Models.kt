@@ -40,7 +40,8 @@ data class SharedLimit(
 )
 
 /** Which notifications the parent wants. */
-data class AlertPrefs(val logins: Boolean = true, val tamper: Boolean = true, val limits: Boolean = true)
+/** What to be told of, and [lock]: whether the app asks for the fingerprint each time it opens. */
+data class AlertPrefs(val logins: Boolean = true, val tamper: Boolean = true, val limits: Boolean = true, val lock: Boolean = true)
 
 /** [pending]: accounts in a shared limit whose computer has not been given it yet (it was off).
  *  [released]: accounts this phone took out of a shared limit, whose computer still counts the
@@ -66,7 +67,7 @@ data class StoreData(
             JSONObject().put("id", g.id).put("minutes", g.minutes).put("action", g.action).put("warn", g.warn).put("tell", g.tell)
                 .put("members", JSONArray(g.members.map { JSONArray().put(it.computerId).put(it.user) }))
         }))
-        .put("prefs", JSONObject().put("logins", prefs.logins).put("tamper", prefs.tamper).put("limits", prefs.limits))
+        .put("prefs", JSONObject().put("logins", prefs.logins).put("tamper", prefs.tamper).put("limits", prefs.limits).put("lock", prefs.lock))
         .put("pending", accountsJson(pending)).put("released", accountsJson(released))
         .toString()
 
@@ -158,7 +159,7 @@ data class StoreData(
                         g.optInt("minutes"), g.optString("action", "poweroff"), g.optBoolean("warn"), g.optBoolean("tell", true),
                     )
                 }.filter { it.members.size > 1 && it.minutes > 0 },
-                AlertPrefs(pr.optBoolean("logins", true), pr.optBoolean("tamper", true), pr.optBoolean("limits", true)),
+                AlertPrefs(pr.optBoolean("logins", true), pr.optBoolean("tamper", true), pr.optBoolean("limits", true), pr.optBoolean("lock", true)),
                 accounts("pending"), accounts("released"),
             )
         } catch (e: Exception) {
