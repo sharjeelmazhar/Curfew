@@ -12,8 +12,10 @@ android {
         applicationId = "app.curfew"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.2"
+        // the same number as the release (agent/VERSION): "1.2.1" -> versionName 1.2.1, versionCode 10201
+        val release = rootProject.file("../agent/VERSION").readText().trim()
+        versionName = release
+        versionCode = release.split(".").map { it.toInt() }.let { (a, b, c) -> a * 10000 + b * 100 + c }
         // Test builds only (build.sh test): no fingerprint lock, so the app can be driven over adb.
         buildConfigField("boolean", "NO_LOCK", (project.findProperty("noLock") != null).toString())
     }
