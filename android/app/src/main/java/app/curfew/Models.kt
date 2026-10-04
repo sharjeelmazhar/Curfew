@@ -589,12 +589,17 @@ fun inSubnet(host: String, addr: String, prefix: Int): Boolean {
     return (a and mask) == (b and mask)
 }
 
+/** A Tailscale address (100.64.0.0/10): reachable from any network, so never replaced by the
+ *  home address the phone finds on the Wi-Fi, and no Wi-Fi advice when it cannot be reached. */
+fun isTailnet(host: String) = inSubnet(host, "100.64.0.0", 10)
+
 /** The phone's own network: is it on Wi-Fi, and which IPv4 networks is it attached to. */
 data class NetInfo(val wifi: Boolean, val nets: List<Pair<String, Int>>)
 
 /** Why can't we reach [host]? Everything the phone can tell from its side. */
 fun diagnose(net: NetInfo, host: String, refused: Boolean): Link = when {
     refused -> Link.NOT_RUNNING
+    isTailnet(host) -> Link.OFF
     !net.wifi -> Link.NO_WIFI
     host.all { it.isDigit() || it == '.' } && net.nets.isNotEmpty() && net.nets.none { inSubnet(host, it.first, it.second) } -> Link.OTHER_WIFI
     else -> Link.OFF
