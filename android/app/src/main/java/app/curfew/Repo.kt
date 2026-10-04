@@ -413,8 +413,11 @@ class Repo(private val app: Context) {
     }
 
     private fun endpoints(id: String, host: String, port: Int) =
-        if (isTailnet(host)) listOf(Endpoint(host, port))
-        else (listOfNotNull(discovery.found.value[id]) + Endpoint(host, port)).distinct()
+        (listOfNotNull(discovery.found.value[id]?.takeIf { !isTailnet(host) || onThisWifi(it.host) }) + Endpoint(host, port)).distinct()
+
+    /** Is [host] on the network the phone is on now? A Tailscale computer is then reached
+     *  directly at home (Tailscale on or off) and through Tailscale everywhere else. */
+    private fun onThisWifi(host: String) = net().let { n -> n.wifi && n.nets.any { inSubnet(host, it.first, it.second) } }
 
     /** Tries the discovered address first, then the last known one. */
     private fun reach(c: Computer, payload: JSONObject, waitMs: Int = 0): Pair<Reply, Endpoint> {
@@ -438,7 +441,7 @@ class Repo(private val app: Context) {
     private fun absorb(c: Computer, reply: Reply, ep: Endpoint): JSONObject? {
         when (reply) {
             is Reply.Ok -> {
-                if (ep.host != c.host || ep.port != c.port)        // the computer's address changed
+                if ((ep.host != c.host || ep.port != c.port) && !isTailnet(c.host))   // the computer's address changed; a Tailscale one stays
                     save { s -> s.copy(computers = s.computers.map { if (it.id == c.id) it.copy(host = ep.host, port = ep.port) else it }) }
                 return reply.json
             }

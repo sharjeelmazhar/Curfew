@@ -540,7 +540,7 @@ fun formatWhen(whenSeconds: Long, nowSeconds: Long): String {
 }
 
 /** How the phone currently sees a computer. */
-enum class Link { CHECKING, ON, OFF, SHUT_DOWN, ASLEEP, RESTARTING, NOT_RUNNING, NO_WIFI, OTHER_WIFI, NOT_RECOGNISED }
+enum class Link { CHECKING, ON, OFF, SHUT_DOWN, ASLEEP, RESTARTING, NOT_RUNNING, NO_WIFI, OTHER_WIFI, AWAY, NOT_RECOGNISED }
 
 /** What a computer said as it went away (the "bye" of a watch answer). */
 fun byeLink(bye: String): Link? = when (bye) {
@@ -560,6 +560,7 @@ fun cardLine(link: Link, status: Status?, nameOf: (UserInfo) -> String = { it.di
     Link.NOT_RUNNING -> "On, but Curfew is not running on it"
     Link.NO_WIFI -> "This phone is not on Wi-Fi"
     Link.OTHER_WIFI -> "This phone is not on the home Wi-Fi"
+    Link.AWAY -> "Cannot be reached from here"
     Link.NOT_RECOGNISED -> "Needs pairing again"
 }
 
@@ -571,6 +572,7 @@ fun linkExplanation(link: Link): String = when (link) {
     Link.NOT_RUNNING -> "The computer is on, but the Curfew service on it is not answering. Restarting the computer usually fixes it."
     Link.NO_WIFI -> "Curfew only works over the home Wi-Fi. Turn Wi-Fi on to see and control this computer."
     Link.OTHER_WIFI -> "This phone is connected to a different network. Curfew works only when the phone and the computer are on the same home Wi-Fi."
+    Link.AWAY -> "Away from home, turn on Tailscale on this phone. If it is already on, the computer is shut down, asleep or has no internet. This page updates by itself when it can be reached."
     Link.NOT_RECOGNISED -> "This computer no longer recognises this phone. It was probably reinstalled. Remove it here, then pair it again: run “sudo curfew pair” on the computer and tap Add computer."
     else -> ""
 }
@@ -599,7 +601,7 @@ data class NetInfo(val wifi: Boolean, val nets: List<Pair<String, Int>>)
 /** Why can't we reach [host]? Everything the phone can tell from its side. */
 fun diagnose(net: NetInfo, host: String, refused: Boolean): Link = when {
     refused -> Link.NOT_RUNNING
-    isTailnet(host) -> Link.OFF
+    isTailnet(host) -> Link.AWAY
     !net.wifi -> Link.NO_WIFI
     host.all { it.isDigit() || it == '.' } && net.nets.isNotEmpty() && net.nets.none { inSubnet(host, it.first, it.second) } -> Link.OTHER_WIFI
     else -> Link.OFF
