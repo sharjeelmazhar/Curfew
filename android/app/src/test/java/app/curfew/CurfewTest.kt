@@ -519,8 +519,9 @@ class CurfewTest {
     @Test fun alertAndDayWords() {
         val zone = java.time.ZoneOffset.UTC
         val start = 1_759_438_500L                                  // 2 Oct 2025, 20:55 UTC
-        assertEquals("Ali logged in" to "On kids-laptop at 8:55 PM", loginAlert("Ali", "kids-laptop", start, start + 60, zone, false))
-        assertEquals("On kids-laptop at 2 Oct 2025, 20:55", loginAlert("Ali", "kids-laptop", start, start + 86400, zone, true).second)
+        assertEquals("Ali logged in" to "kids-laptop", loginAlert("Ali", "kids-laptop"))
+        assertEquals("kids-laptop · with the password", loginAlert("Ali", "kids-laptop", "password").second)
+        assertEquals("kids-laptop · from your phone", loginAlert("Ali", "kids-laptop", "phone").second)
         val today = java.time.LocalDate.parse("2026-10-03")
         assertEquals("Today", dayLabel("2026-10-03", today))
         assertEquals("Yesterday", dayLabel("2026-10-02", today))
@@ -650,11 +651,11 @@ class CurfewTest {
         val zone = java.time.ZoneOffset.UTC
         val at = 1_759_438_500L                                     // 2 Oct 2025, 20:55 UTC
         assertEquals(
-            "Ali tried to turn on airplane mode" to "On kids-laptop at 8:55 PM. The Wi-Fi was turned back on.",
+            "Ali tried to turn on airplane mode" to "kids-laptop · Wi-Fi turned back on",
             tamperAlert("Ali", "airplane", "kids-laptop", at, at + 60, zone, false),
         )
         assertEquals("Ali tried to turn off the Wi-Fi", tamperAlert("Ali", "wifi_off", "pc", at, at, zone, false).first)
-        assertEquals("On pc at 8:55 PM. It was not allowed.", tamperAlert("Ali", "wifi_off", "pc", at, at, zone, false).second)
+        assertEquals("pc · Blocked", tamperAlert("Ali", "wifi_off", "pc", at, at, zone, false).second)
         assertEquals("Ali tried to change the Wi-Fi settings", tamperAlert("Ali", "wifi_settings", "pc", at, at, zone, false).first)
         assertEquals("Ali tried to join another network", tamperAlert("Ali", "other_network", "pc", at, at, zone, false).first)
         assertEquals("Ali tried to change the network settings", tamperAlert("Ali", "something new", "pc", at, at, zone, false).first)
@@ -665,8 +666,8 @@ class CurfewTest {
 
     @Test fun limitWordsInNotifications() {
         val e = AgentEvent(1, 0, "limit", "ali", minutes = 60, used = 3610, action = "poweroff")
-        assertEquals("Screen time is up for Ali" to "1 h used today on pc. It shuts down in a minute.", limitAlert("Ali", e, "pc"))
-        assertEquals("Ali will be logged out in a minute.", limitAlert("Ali", e.copy(action = "logout"), "pc").second.substringAfter(". "))
+        assertEquals("Screen time is up for Ali" to "pc · 1 h today · shuts down in a minute", limitAlert("Ali", e, "pc"))
+        assertEquals("pc · 1 h today · logs out in a minute", limitAlert("Ali", e.copy(action = "logout"), "pc").second)
         assertEquals("Ali logged in again after the time was up", limitAlert("Ali", e.copy(again = true), "pc").first)
     }
 
