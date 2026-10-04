@@ -1173,26 +1173,10 @@ fun BrowserScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: St
     blocking?.let { site ->
         val canBlock = live.status?.caps?.contains("web") == true
         val who = c.userAliases[userName] ?: live.status?.users?.find { it.name == userName }?.display ?: userName
-        fun block(forUser: String?) {
+        BlockSheet(site, who, live.status?.web?.takeIf { canBlock }, userName, onSet = { sites, forUser, done ->
             blocking = null
-            if (!canBlock) return
-            val sites = live.status?.web?.of(forUser)?.sites.orEmpty()
-            if (site in sites) scope.say(snack, "$site is already blocked")
-            else scope.launch { scope.say(snack, repo.setWeb(id, sites + site, user = forUser) ?: "$site is blocked" + if (forUser != null) " for $who" else " for every child") }
-        }
-        ConfirmSheet(
-            "Block $site?",
-            if (canBlock) "Nobody blocked from it can open $site or anything under it, in any browser."
-            else "Blocking websites needs a newer Curfew on ${c.title}.",
-            "Block for $who only",
-            onConfirm = { block(userName) },
-            onDismiss = { blocking = null },
-        ) {
-            if (canBlock) {
-                Spacer(Modifier.size(16.dp))
-                BigButton("Block for every child", Icons.Rounded.Block, { block(null) }, Modifier.fillMaxWidth())
-            }
-        }
+            scope.launch { scope.say(snack, repo.setWeb(id, sites, user = forUser) ?: done) }
+        }, onDismiss = { blocking = null })
     }
     Page(b?.name ?: "Websites", snack, onBack) {
         item {

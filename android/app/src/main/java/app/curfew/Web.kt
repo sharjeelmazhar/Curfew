@@ -41,6 +41,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import org.json.JSONArray
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.text.style.TextAlign
 
 /** Sends the computer its new blocked websites and/or private-window rule. Returns an error or null. */
 suspend fun Repo.setWeb(id: String, sites: List<String>? = null, private: Boolean? = null, user: String? = null): String? {
@@ -185,6 +189,48 @@ fun WebScreen(repo: Repo, snack: SnackbarHostState, id: String, user: String?, o
                     }
                 }
             }
+        }
+    }
+}
+
+/** Long-press on a page: block its site for this account or for every child, or unblock it where it is blocked. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BlockSheet(site: String, who: String, rules: WebRules?, user: String, onSet: (sites: List<String>, forUser: String?, done: String) -> Unit, onDismiss: () -> Unit) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss, containerColor = LocalExtra.current.card,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        Column(Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, bottom = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(site, style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
+            Spacer(Modifier.size(8.dp))
+            if (rules == null) {
+                Text("Blocking websites needs a newer Curfew on this computer.", style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+            } else {
+                val mine = rules.of(user).sites
+                val everyone = rules.sites
+                Text(
+                    boldNames(when {
+                        site in everyone -> "Blocked for every child on this computer."
+                        site in mine -> "Blocked for ${bold(who)}."
+                        else -> "Block $site and everything under it, in every browser."
+                    }),
+                    style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.size(20.dp))
+                if (site in everyone)
+                    BigButton("Unblock for every child", null, { onSet(everyone - site, null, "$site is allowed again") }, Modifier.fillMaxWidth(), primary = true)
+                else if (site in mine)
+                    BigButton("Unblock for $who", null, { onSet(mine - site, user, "$site is allowed again for $who") }, Modifier.fillMaxWidth(), primary = true)
+                else {
+                    BigButton("Block for $who only", Icons.Rounded.Block, { onSet(mine + site, user, "$site is blocked for $who") }, Modifier.fillMaxWidth(), primary = true)
+                    Spacer(Modifier.size(12.dp))
+                    BigButton("Block for every child", Icons.Rounded.Block, { onSet(everyone + site, null, "$site is blocked for every child") }, Modifier.fillMaxWidth())
+                }
+            }
+            Spacer(Modifier.size(12.dp))
+            BigButton("Cancel", null, onDismiss, Modifier.fillMaxWidth())
         }
     }
 }
