@@ -80,6 +80,7 @@ def state(write=False):
         for k in ("pairing", "timer"):
             st.setdefault(k, None)
         st.setdefault("web", {"sites": [], "private": False})
+        st["web"].setdefault("users", {})
         yield st
         if write:
             tmp = path + ".tmp"
@@ -1067,8 +1068,8 @@ def net_sync():
     off = {n for n, e in st["net"].items() if e.get("blocked")}
     kids = [u for u in human_users() if not u["admin"]]
     users = [u for u in kids if u["name"] in off]
-    sites = st["web"].get("sites") or []
-    rules = [r for u in kids for r in (fw_rules(u["uid"]) if u["name"] in off else fw_wired(u["uid"]) + fw_sites(u["uid"], sites))]
+    rules = [r for u in kids for r in (fw_rules(u["uid"]) if u["name"] in off
+                                       else fw_wired(u["uid"]) + fw_sites(u["uid"], web_for(st["web"], u["name"])[0]))]
     if DRY:
         log("would block the internet for: " + (", ".join(u["name"] for u in users) or "nobody"))
         return True
@@ -1137,6 +1138,13 @@ def web_policies(sites, private):
     return ff, ch
 
 
+def web_for(web, name):
+    """The rules for one account: the computer's own, and on top the account's."""
+    mine = (web.get("users") or {}).get(name) or {}
+    sites = sorted(set(web.get("sites") or []) | set(mine.get("sites") or []))
+    return sites, bool(web.get("private")) or bool(mine.get("private"))
+
+
 def web_write(path, data):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path + ".tmp", "w") as f:
@@ -1183,10 +1191,12 @@ def web_sync(force=False):
     administrator is, they are taken away again. Browsers read them when they start."""
     with state() as st:
         pass
-    sites, private = st["web"].get("sites") or [], bool(st["web"].get("private"))
     admins = {u["name"] for u in human_users() if u["admin"]}
-    admin_front = any(s["active"] and s["user"] in admins for s in sessions())
-    on = (sites or private) and not admin_front
+    front = [s["user"] for s in sessions() if s["active"]]
+    admin_front = any(n in admins for n in front)
+    # the child at the screen gets their own rules; with nobody there, the computer's
+    sites, private = web_for(st["web"], front[0] if front else "")
+    on = bool(sites or private) and not admin_front
     key = json.dumps([sites, private]) if on else None
     if key == _web_done["key"] and not force:
         return
@@ -1222,9 +1232,17 @@ def web_loop():
 
 def op_web_set(req, st):
     """The blocked websites of this computer ("sites", replaces the list) and whether children
-    may open private windows ("private": true blocks them). Administrators are never limited."""
+    may open private windows ("private": true blocks them). With "user", the same for that one
+    account, on top of the computer's. Administrators are never limited."""
+    name = req.get("user")
+    if name is not None:
+        u = next((u for u in all_users() if u["name"] == name), None)
+        if not u:
+            return {"ok": False, "error": "bad_user"}
+        if u["admin"]:
+            return {"ok": False, "error": "is_admin"}
     with state(write=True) as s:
-        web = s["web"]
+        web = s["web"] if name is None else s["web"]["users"].setdefault(name, {"sites": [], "private": False})
         if "sites" in req:
             raw = req["sites"]
             if not isinstance(raw, list) or len(raw) > SITES_MAX:
@@ -1235,8 +1253,11 @@ def op_web_set(req, st):
             web["sites"] = sorted(set(sites))
         if "private" in req:
             web["private"] = bool(req["private"])
-        out = dict(web)
-    log("websites: %d blocked, private windows %s" % (len(out["sites"]), "blocked" if out["private"] else "allowed"))
+        if name is not None and not web["sites"] and not web["private"]:
+            s["web"]["users"].pop(name, None)
+        out = json.loads(json.dumps(s["web"]))
+        mine = (out.get("users") or {}).get(name, {"sites": [], "private": False}) if name else out
+    log("websites%s: %d blocked, private windows %s" % (" for " + name if name else "", len(mine["sites"]), "blocked" if mine["private"] else "allowed"))
     net_sync()
     web_sync(force=True)
     return {"ok": True, "web": out}

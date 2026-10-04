@@ -241,7 +241,8 @@ The app's signing key (`android/curfew-release.jks`) is created by the first bui
 
 On a computer's page, **Blocked websites** lists the sites children cannot open. Type a site (for
 example `youtube.com`), or long-press a page in a browser's history and choose **Block**. A site is
-blocked with everything under it (`youtube.com` also blocks `www.youtube.com` and `m.youtube.com`).
+blocked with everything under it (`youtube.com` also blocks `www.youtube.com` and `m.youtube.com`). Each
+child's page has its own **Blocked websites** too, for sites only that account may not open.
 Some services use several addresses (YouTube also uses `youtu.be`); add each one. The switch
 **Block private windows** turns off private and incognito windows for children, so every page they
 open stays in the history. Administrators are never limited. Children's accounts also reach the

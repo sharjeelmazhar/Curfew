@@ -537,7 +537,13 @@ try:
           and ch["URLBlocklist"] == ["youtube.com"] and ch["IncognitoModeAvailability"] == 1)
     check("the firewall refuses a blocked site for the account", any("youtube.com" in r for r in curfew.fw_sites(1001, ["youtube.com"])[1]) and curfew.fw_sites(1001, []) == [])
     r = call(a, "web_set", sites=["https://www.YouTube.com/x", "discord.com", "discord.com"], private=True)[1]
-    check("sites are kept by their name, once", r == {"ok": True, "web": {"sites": ["discord.com", "youtube.com"], "private": True}})
+    check("sites are kept by their name, once", r == {"ok": True, "web": {"sites": ["discord.com", "youtube.com"], "private": True, "users": {}}})
+    r = call(a, "web_set", user="gaming", sites=["tiktok.com"])[1]
+    check("an account gets its own sites on top", r["ok"] and r["web"]["users"]["gaming"] == {"sites": ["tiktok.com"], "private": False}
+          and curfew.web_for(r["web"], "gaming") == (["discord.com", "tiktok.com", "youtube.com"], True)
+          and curfew.web_for(r["web"], "classes") == (["discord.com", "youtube.com"], True))
+    check("no own sites for an admin", call(a, "web_set", user="dad", sites=["x.com"])[1] == {"ok": False, "error": "is_admin"})
+    check("an emptied account list is forgotten", call(a, "web_set", user="gaming", sites=[])[1]["web"]["users"] == {})
     check("a bad site is refused", call(a, "web_set", sites=["not a site"])[1] == {"ok": False, "error": "bad_site"})
     check("status tells the sites", call(a, "status")[1]["web"]["sites"] == ["discord.com", "youtube.com"] and "web" in call(a, "status")[1]["caps"])
     check("no limit for an admin", call(a, "limit_set", user="dad", minutes=60)[1] == {"ok": False, "error": "is_admin"})

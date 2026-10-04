@@ -43,8 +43,9 @@ import kotlinx.coroutines.launch
 import org.json.JSONArray
 
 /** Sends the computer its new blocked websites and/or private-window rule. Returns an error or null. */
-suspend fun Repo.setWeb(id: String, sites: List<String>? = null, private: Boolean? = null): String? {
+suspend fun Repo.setWeb(id: String, sites: List<String>? = null, private: Boolean? = null, user: String? = null): String? {
     val args = buildMap<String, Any> {
+        user?.let { put("user", it) }
         sites?.let { put("sites", JSONArray(it)) }
         private?.let { put("private", it) }
     }
@@ -53,7 +54,7 @@ suspend fun Repo.setWeb(id: String, sites: List<String>? = null, private: Boolea
 
 /** The card on a computer's page that leads to its blocked websites. */
 @Composable
-fun WebLink(rules: WebRules, onClick: () -> Unit) {
+fun WebLink(rules: WebRules, onClick: () -> Unit, all: WebRules? = null) {
     Card(padding = 8.dp) {
         Row(
             Modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium).clickable(onClick = onClick).padding(12.dp),
@@ -66,9 +67,11 @@ fun WebLink(rules: WebRules, onClick: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text("Blocked websites", style = MaterialTheme.typography.titleMedium)
                 val n = rules.sites.size
+                val shared = all?.sites?.size ?: 0
                 Text(
                     (if (n == 0) "None yet" else if (n == 1) "1 website" else "$n websites") +
-                        (if (rules.private) " · private windows blocked" else ""),
+                        (if (all != null && shared > 0) " · $shared for every child" else "") +
+                        (if (rules.private || all?.private == true) " · private windows blocked" else ""),
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -78,7 +81,7 @@ fun WebLink(rules: WebRules, onClick: () -> Unit) {
 }
 
 @Composable
-fun WebScreen(repo: Repo, snack: SnackbarHostState, id: String, onBack: () -> Unit, onGone: () -> Unit) {
+fun WebScreen(repo: Repo, snack: SnackbarHostState, id: String, user: String?, onBack: () -> Unit, onGone: () -> Unit) {
     val store by repo.store.collectAsStateWithLifecycle()
     val liveMap by repo.live.collectAsStateWithLifecycle()
     val c = store.computers.find { it.id == id }
@@ -87,7 +90,9 @@ fun WebScreen(repo: Repo, snack: SnackbarHostState, id: String, onBack: () -> Un
         return
     }
     val live = liveMap[id] ?: Live()
-    val rules = live.status?.web ?: WebRules()
+    val all = live.status?.web ?: WebRules()
+    val rules = all.of(user)
+    val who = user?.let { u -> c.userAliases[u] ?: live.status?.users?.find { it.name == u }?.display ?: u }
     val ready = live.link == Link.ON && live.status?.caps?.contains("web") == true
     var typed by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
@@ -97,7 +102,7 @@ fun WebScreen(repo: Repo, snack: SnackbarHostState, id: String, onBack: () -> Un
         if (busy) return
         busy = true
         scope.launch {
-            val error = repo.setWeb(id, sites, private)
+            val error = repo.setWeb(id, sites, private, user)
             busy = false
             scope.say(snack, error ?: done)
         }
@@ -114,8 +119,11 @@ fun WebScreen(repo: Repo, snack: SnackbarHostState, id: String, onBack: () -> Un
     Page("Blocked websites", snack, onBack) {
         item {
             Text(
-                "Children's accounts on ${c.title} cannot open these websites, in any browser. Everything under a site is blocked too: " +
-                    "youtube.com also blocks www.youtube.com and m.youtube.com. Administrators are not limited.",
+                boldNames(
+                    (if (who == null) "No child's account on ${c.title} can open these websites, in any browser. Administrators are not limited. "
+                    else "Only ${bold(who)} cannot open these websites on ${c.title}; other accounts can. ") +
+                        "Everything under a site is blocked too: youtube.com also blocks www.youtube.com and m.youtube.com.",
+                ),
                 style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 4.dp),
             )
         }
@@ -127,7 +135,14 @@ fun WebScreen(repo: Repo, snack: SnackbarHostState, id: String, onBack: () -> Un
         }
         item {
             Card(padding = 8.dp) {
-                PrefRow("Block private windows", "No private or incognito windows for children, so every page they open stays in the history", rules.private) {
+                PrefRow(
+                    "Block private windows",
+                    if (who == null) "No private or incognito windows for children, so every page they open stays in the history"
+                    else if (all.private) "Already blocked for every child on this computer"
+                    else "No private or incognito windows for ${bold(who)}, so every page stays in the history",
+                    rules.private || (who != null && all.private),
+                ) {
+                    if (who != null && all.private) return@PrefRow
                     if (ready) send(private = it, done = if (it) "Private windows are blocked" else "Private windows are allowed")
                 }
             }
@@ -152,8 +167,11 @@ fun WebScreen(repo: Repo, snack: SnackbarHostState, id: String, onBack: () -> Un
                 )
             }
         }
+        if (who != null && all.sites.isNotEmpty()) item {
+            Note("Also blocked for every child on this computer: " + all.sites.joinToString(", "))
+        }
         if (rules.sites.isNotEmpty()) {
-            item { SectionLabel("Blocked") }
+            item { SectionLabel(if (who == null) "Blocked for every child" else "Blocked for ${who}") }
             item {
                 Card(padding = 8.dp) {
                     rules.sites.forEachIndexed { i, site ->

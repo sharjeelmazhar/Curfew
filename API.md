@@ -74,7 +74,7 @@ Unauthenticated refusals (HTTP 4xx, treat as hints only): `unknown_phone`, `bad_
 | `timer_set` | `seconds` (10-86400) or `minutes` (1-1440), `warn` (bool) | `timer` |
 | `timer_cancel` | | `timer: null` |
 | `lock`, `logout` | `user` | |
-| `web_set` | `sites`? (list, replaces the blocked websites; each is reduced to its site, `www.` dropped), `private`? (true: children get no private/incognito windows) | `web`: `{sites, private}`. Error `bad_site`. Applies to accounts that are not administrators: the firewall refuses those sites for them (TLS server name / HTTP Host, QUIC refused), and Firefox/Chrome policies (website filter, no private windows, no DNS over HTTPS) are in place while no administrator is the active session |
+| `web_set` | `user`? (that account's own rules, on top of the computer's; `status` lists them under `web.users`), `sites`? (list, replaces the blocked websites; each is reduced to its site, `www.` dropped), `private`? (true: children get no private/incognito windows) | `web`: `{sites, private}`. Error `bad_site`. Applies to accounts that are not administrators: the firewall refuses those sites for them (TLS server name / HTTP Host, QUIC refused), and Firefox/Chrome policies (website filter, no private windows, no DNS over HTTPS) are in place while no administrator is the active session |
 | `login` | `user` | `how`: `unlocked` (an open session was brought to the screen and unlocked) or `approved` (the login screen lets this account in once, within `seconds`) |
 | `net_set` | `user`, `seconds` (0 = now, or 10-86400), `warn` | internet off for that account, now or after the countdown |
 | `net_clear` | `user` | internet back on, countdown cancelled |

@@ -2,6 +2,7 @@ package app.curfew
 
 import android.content.Intent
 import android.net.Uri
+import androidx.navigation.navArgument
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -110,7 +111,9 @@ fun CurfewNav(repo: Repo) {
         composable("home") {
             HomeScreen(repo, snack, onOpen = { go("computer/$it") }, onAdd = { go("add") }, onAlerts = { go("alerts") }, onSettings = { go("settings") })
         }
-        composable("web/{id}") { entry -> WebScreen(repo, snack, entry.arguments?.getString("id").orEmpty(), onBack = ::back, onGone = ::home) }
+        composable("web/{id}?user={user}", arguments = listOf(navArgument("user") { nullable = true; defaultValue = null })) { entry ->
+            WebScreen(repo, snack, entry.arguments?.getString("id").orEmpty(), entry.arguments?.getString("user"), onBack = ::back, onGone = ::home)
+        }
         composable("settings") { SettingsScreen(repo, snack, onBack = ::back) }
         composable("alerts") {
             AlertsScreen(repo, snack, onBack = ::back, onOpen = { id, user -> go(if (user == null) "computer/$id" else "user/$id/${Uri.encode(user)}") })
@@ -128,7 +131,7 @@ fun CurfewNav(repo: Repo) {
             val user = entry.arguments?.getString("user").orEmpty()
             UserScreen(repo, snack, id, user, onBack = ::back, onGone = ::home,
                 onBrowser = { go("browser/$id/${Uri.encode(user)}/$it") }, onUsage = { go("usage/$id/${Uri.encode(user)}") },
-                onLimit = { go("limit/$id/${Uri.encode(user)}") })
+                onLimit = { go("limit/$id/${Uri.encode(user)}") }, onWeb = { go("web/$id?user=${Uri.encode(user)}") })
         }
         composable("limit/{id}/{user}") { entry ->
             LimitScreen(repo, snack, entry.arguments?.getString("id").orEmpty(), entry.arguments?.getString("user").orEmpty(), onBack = ::back, onGone = ::home)

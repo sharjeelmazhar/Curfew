@@ -54,6 +54,7 @@ import androidx.compose.material.icons.rounded.QrCodeScanner
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.WifiOff
@@ -586,7 +587,7 @@ private fun UserRow(u: UserInfo, title: String, onClick: () -> Unit) {
 @Composable
 fun UserScreen(
     repo: Repo, snack: SnackbarHostState, id: String, userName: String, onBack: () -> Unit, onGone: () -> Unit,
-    onBrowser: (String) -> Unit, onUsage: () -> Unit, onLimit: () -> Unit,
+    onBrowser: (String) -> Unit, onUsage: () -> Unit, onLimit: () -> Unit, onWeb: () -> Unit,
 ) {
     val store by repo.store.collectAsStateWithLifecycle()
     val liveMap by repo.live.collectAsStateWithLifecycle()
@@ -711,6 +712,9 @@ fun UserScreen(
                     }
                 }
             }
+        }
+        if (on && user != null && !user.admin && "web" in caps) item {
+            live.status?.web?.let { w -> WebLink(w.of(userName), onWeb, all = w) }
         }
         if (on && user != null && !user.admin) item {
             if ("limits" in caps) LimitCard(repo, c, user, name, busy == null, onLimit) { minutes ->
@@ -1168,19 +1172,27 @@ fun BrowserScreen(repo: Repo, snack: SnackbarHostState, id: String, userName: St
     var blocking by remember { mutableStateOf<String?>(null) }
     blocking?.let { site ->
         val canBlock = live.status?.caps?.contains("web") == true
+        val who = c.userAliases[userName] ?: live.status?.users?.find { it.name == userName }?.display ?: userName
+        fun block(forUser: String?) {
+            blocking = null
+            if (!canBlock) return
+            val sites = live.status?.web?.of(forUser)?.sites.orEmpty()
+            if (site in sites) scope.say(snack, "$site is already blocked")
+            else scope.launch { scope.say(snack, repo.setWeb(id, sites + site, user = forUser) ?: "$site is blocked" + if (forUser != null) " for $who" else " for every child") }
+        }
         ConfirmSheet(
             "Block $site?",
-            if (canBlock) "Children's accounts on ${c.title} will not be able to open $site or anything under it, in any browser."
+            if (canBlock) "Nobody blocked from it can open $site or anything under it, in any browser."
             else "Blocking websites needs a newer Curfew on ${c.title}.",
-            "Block",
-            onConfirm = {
-                blocking = null
-                val sites = live.status?.web?.sites.orEmpty()
-                if (canBlock && site !in sites) scope.launch { scope.say(snack, repo.setWeb(id, sites + site) ?: "$site is blocked") }
-                else if (canBlock) scope.say(snack, "$site is already blocked")
-            },
+            "Block for $who only",
+            onConfirm = { block(userName) },
             onDismiss = { blocking = null },
-        )
+        ) {
+            if (canBlock) {
+                Spacer(Modifier.size(16.dp))
+                BigButton("Block for every child", Icons.Rounded.Block, { block(null) }, Modifier.fillMaxWidth())
+            }
+        }
     }
     Page(b?.name ?: "Websites", snack, onBack) {
         item {

@@ -276,13 +276,18 @@ fun parseStatus(j: JSONObject): Status {
         caps = (j.optJSONArray("caps") ?: JSONArray()).let { c -> (0 until c.length()).map { c.optString(it) }.toSet() },
         date = j.optString("date"),
         web = j.optJSONObject("web")?.let { w ->
-            WebRules((w.optJSONArray("sites") ?: JSONArray()).let { a -> (0 until a.length()).map { a.optString(it) } }, w.optBoolean("private"))
+            fun rules(o: JSONObject) = WebRules((o.optJSONArray("sites") ?: JSONArray()).let { a -> (0 until a.length()).map { a.optString(it) } }, o.optBoolean("private"))
+            val us = w.optJSONObject("users") ?: JSONObject()
+            rules(w).copy(users = us.keys().asSequence().mapNotNull { k -> us.optJSONObject(k)?.let { k to rules(it) } }.toMap())
         } ?: WebRules(),
     )
 }
 
-/** The websites children cannot open on a computer, and whether private windows are blocked there. */
-data class WebRules(val sites: List<String> = emptyList(), val private: Boolean = false)
+/** The websites children cannot open on a computer, and whether private windows are blocked there;
+ *  [users]: each account's own rules, on top of these. */
+data class WebRules(val sites: List<String> = emptyList(), val private: Boolean = false, val users: Map<String, WebRules> = emptyMap()) {
+    fun of(user: String?): WebRules = if (user == null) this else users[user] ?: WebRules()
+}
 
 private val SITE = Regex("^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z][a-z0-9-]{0,62}$")
 
