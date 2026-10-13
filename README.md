@@ -6,7 +6,7 @@
 </p>
 
 <details>
-<summary><b>More screenshots</b> (shutdown and internet timers, open apps, browser history, blocked sites, screen time and alerts, under the hood)</summary>
+<summary><b>More screenshots</b> (shutdown and internet timers · open apps, browser history, blocked sites · screen time and alerts · under the hood)</summary>
 <br>
 <p align="center">
   <img src="docs/portfolio/02-control.jpg" alt="Shutdown and internet timers" width="720">
