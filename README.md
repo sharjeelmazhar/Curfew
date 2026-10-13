@@ -1,5 +1,25 @@
 # Curfew
 
+<!-- portfolio:start -->
+<p align="center">
+  <img src="docs/portfolio/01-cover.jpg" alt="Curfew overview" width="720">
+</p>
+
+<details>
+<summary><b>More screenshots</b> (shutdown and internet timers, open apps, browser history, blocked sites, screen time and alerts, under the hood)</summary>
+<br>
+<p align="center">
+  <img src="docs/portfolio/02-control.jpg" alt="Shutdown and internet timers" width="720">
+  <br><br>
+  <img src="docs/portfolio/03-activity.jpg" alt="Open apps, browser history, blocked sites" width="720">
+  <br><br>
+  <img src="docs/portfolio/04-screen-time.jpg" alt="Screen time and alerts" width="720">
+  <br><br>
+  <img src="docs/portfolio/05-system.jpg" alt="Under the hood" width="720">
+</p>
+</details>
+<!-- portfolio:end -->
+
 See and control the kids' Ubuntu laptops from your Android phone, while you are at home on the same Wi-Fi.
 
 From the phone you can:
