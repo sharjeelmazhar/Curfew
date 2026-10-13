@@ -20,7 +20,7 @@
 </details>
 <!-- portfolio:end -->
 
-See and control the kids' Ubuntu laptops from your Android phone, while you are at home on the same Wi-Fi.
+See and control the kids' Ubuntu laptops from your Android phone: at home on the same Wi-Fi, or from anywhere over the internet with [Tailscale](#using-it-away-from-home-tailscale).
 
 From the phone you can:
 
