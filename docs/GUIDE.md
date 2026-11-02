@@ -57,6 +57,18 @@ The **bell** at the top of the home screen keeps every notification of the last 
 
 If your phone was away from home, or the laptop had no Wi-Fi, you are told when both are home again; the notification shows when it happened, not when you were told. When a laptop shuts down, restarts or goes to sleep, the app shows that at once ("Shut down", "Asleep").
 
+### Screenshots
+
+On a child's page, **Screenshots** takes a picture of their screen when you ask, or by itself every 15 seconds, or every 1, 5 or 15 minutes. You can have it take them only while Discord or Minecraft is open. It works only for children's accounts, never for an administrator's.
+
+Your child is not told and sees nothing when one is taken. These are only pictures Curfew takes; Curfew never reads screenshots your child takes.
+
+Screenshots stay on the computer for 7 days. Your phone keeps a copy too, encrypted and never in your photos, so you can still look at them while the computer is off. **How much to keep** in the app's Settings chooses the size on the phone (Off, 100 MB, 300 MB or 1 GB); the oldest are removed first.
+
+### Notices on the child's screen
+
+**Show notices on the screen** on a child's page is off unless you turn it on. When it is on, your child sees a notice when a blocked app is closed, when Wi-Fi is turned back on, and for similar things Curfew does by itself. Warnings before a shut-down, or before the internet or screen time ends, have their own **Warn them first** choice.
+
 ### Daily limit
 
 On an account's page, **No daily limit** opens the limit: how long that account may be used each day (30 minutes to 12 hours), and what happens when the time is up: **Shut down the computer**, or **Log them out**. Time counts the same way as screen time: on the screen and unlocked. With **Warn them first** they get a notice 5 minutes and 1 minute before; when the time is up they get a notice and one more minute to save their work. If someone else is on the screen by then (after "Switch user"), only their account is logged out instead of shutting down. **Tell me when the time is up** sends you a notification.
@@ -71,7 +83,7 @@ On an account's page, **Bedtime** sets the hours each night that account may not
 
 ### Blocked apps
 
-On an account's page, **Blocked apps** lists apps that child may not open, such as Minecraft or a game launcher. Choose from the apps seen on that account or common ones, or type a name. If they open one, it closes within a few seconds, they see why, and you get a notification (at most once a minute per app). This works with your phone away and after a restart. Admin accounts cannot be limited, and the same app stays usable on your own account.
+On an account's page, **Blocked apps** lists apps that child may not open, such as Minecraft or a game launcher. Choose from the apps seen on that account or common ones, or type a name. If they open one, it closes within a few seconds and you get a notification (at most once a minute per app). They see why only if **Show notices on the screen** is on for that account. This works with your phone away and after a restart. Admin accounts cannot be limited, and the same app stays usable on your own account.
 
 It goes by the program's name. **If someone renames a program or copies it under another name, it gets past this.** It never closes Windows, the desktop or Curfew, and it closes a browser only if you choose that browser; to keep one site away use blocked websites. The app ends suddenly, so anything not saved in it is lost. Checking every 3 seconds uses too little of the computer to notice.
 

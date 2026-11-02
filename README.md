@@ -10,7 +10,7 @@
 
 | | |
 |---|---|
-| **See what is happening** | Whether each computer is on, who is using it, which apps are open, which websites they visited and what they searched for |
+| **See what is happening** | Whether each computer is on, who is using it, which apps are open, which websites they visited and what they searched for. Screenshots of a child's screen, when you ask or every few minutes |
 | **Set the rules** | Daily screen-time limits, bedtimes, open hours, blocked apps and websites, no private windows, only installed programs |
 | **Act right now** | Shut down or restart, now or on a timer. Lock the screen, log out, or turn the internet off for one account |
 | **Log in without the password** | Let your child in from your phone, or make an account open only when you allow it |
