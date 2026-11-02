@@ -73,4 +73,4 @@ For everything else, read the **[full guide](docs/GUIDE.md)**: each feature, rem
 
 ---
 
-Designed and developed by **Sharjeel M. Rajput**. © 2026. All rights reserved. Curfew is free to install and use; its source code is private.
+Designed and developed by **[Sharjeel M. Rajput](https://github.com/sharjeelmazhar)**. © 2026. All rights reserved. Curfew is free to install and use; its source code is private.
