@@ -5,8 +5,8 @@ Everything the app can do, and what to do if something goes wrong. To install Cu
 ## Using the app
 
 - **Home screen:** one card per laptop. A glowing green power light means it is on; a dim one means off or out of reach. The line below says who is using it. For a laptop that is off it says when the phone last saw it. If a countdown is running you see it here.
-- **Tap a laptop:** Shut down, Restart, the shut-down timer, and the list of accounts on that laptop with what each is doing (not logged in, logged in in the background, in use right now, screen locked). After "Switch user", both accounts are logged in and both are shown: the one on the screen has a green dot, the one left in the background an orange dot. Under each name you see since when it is logged in and how long it was used today. **Screen time** at the bottom opens the times for every account.
-- **Tap an account:** its daily limit, Log in without the password, Lock screen, Log out, a shut-down timer for the computer, the internet for that account, and what that person has open at the moment.
+- **Tap a laptop:** the list of accounts, children first and administrators below them, with what each is doing (not logged in, logged in in the background, in use, or locked). Under that: the shut-down timer, Restart, Shut down, Screen time and Blocked websites.
+- **Tap an account:** three tabs. **Activity** shows screen time, what is open, websites and screenshots. **Rules** has the daily limit, bedtime, open hours, blocked apps and websites and the switches (an administrator has no rules, so no tab). **Controls** has Lock screen, Log out, the internet for that account and the shut-down timer. **Log in without the password** stays at the top whenever that account is not on the screen.
 - **The pencil** at the top of a laptop or an account gives it a name of your own ("Emma's computer", "Gaming"). The name exists only in the app; nothing changes on the laptop.
 
 The timers are silent unless you turn on **Warn them first**, which shows a notice on the laptop when the timer starts and again one minute before the end.
@@ -34,6 +34,8 @@ This reads the browser's own history on the laptop, so it works even when the pe
 What it cannot show: **private or incognito windows**. Browsers write nothing to disk for those, so there is nothing to read; switch them off with **Block private windows** (below). Curfew keeps its own copy of a child's history for 7 days, so clearing the history in the browser does not hide it from the phone. Open tabs are read exactly for Firefox; for Chrome they are shown as "the last few minutes", because Chrome does not let anything read its open tabs. Other browsers (Brave, Edge, Tor) are not read.
 
 The list travels over the home Wi-Fi signed but **not encrypted**, the same as everything else Curfew sends, so treat it as private to the home network.
+
+**Logos.** Common apps and websites show their own logo. For other websites the logo comes from the child's own browser, which already saved it: nothing outside your home is asked, so no other company learns which sites were opened. A site with no saved logo shows its first letter.
 
 ### Screen time
 
