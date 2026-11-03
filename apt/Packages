@@ -1,0 +1,50 @@
+Package: curfew
+Version: 1.3.6
+Architecture: amd64
+Maintainer: Sharjeel Mazhar <sharjeelmazhar@users.noreply.github.com>
+Installed-Size: 3904
+Depends: systemd, iptables
+Recommends: avahi-daemon
+Suggests: libnotify-bin
+Filename: ./curfew_1.3.6_amd64.deb
+Size: 1785192
+MD5sum: 2ed9c11f2c1e9b6d1896b53bf9b8b8e5
+SHA1: c965a5c374e28831a8aa1dbfe8d023ff06dbe6ed
+SHA256: 3616a03195a6c004963c0a05c9b4b2a6f890d8bac9493fdddc08d346f502404b
+Section: admin
+Priority: optional
+Homepage: https://github.com/sharjeelmazhar/Curfew
+Description: See and control this computer from a paired phone at home
+ The laptop side of Curfew. A paired Android phone on the same Wi-Fi can see
+ who is logged in, shut the computer down now or after a countdown, lock or
+ log out an account, let an account in without its password being typed, and
+ turn the internet off for one account.
+ .
+ Installing this package also adds the Curfew package source, so later
+ versions arrive with "sudo apt update && sudo apt upgrade".
+
+Package: curfew
+Version: 1.3.6
+Architecture: arm64
+Maintainer: Sharjeel Mazhar <sharjeelmazhar@users.noreply.github.com>
+Installed-Size: 3532
+Depends: systemd, iptables
+Recommends: avahi-daemon
+Suggests: libnotify-bin
+Filename: ./curfew_1.3.6_arm64.deb
+Size: 1558556
+MD5sum: 92ffbf3912bfb55702fef23638ed8dc7
+SHA1: ed2fbffe873f32aa6bacee8c13844d9b84d22983
+SHA256: 92dfff7063f8000b558dc45141ed677b11866d4c1a091b1926314ded5c4032d9
+Section: admin
+Priority: optional
+Homepage: https://github.com/sharjeelmazhar/Curfew
+Description: See and control this computer from a paired phone at home
+ The laptop side of Curfew. A paired Android phone on the same Wi-Fi can see
+ who is logged in, shut the computer down now or after a countdown, lock or
+ log out an account, let an account in without its password being typed, and
+ turn the internet off for one account.
+ .
+ Installing this package also adds the Curfew package source, so later
+ versions arrive with "sudo apt update && sudo apt upgrade".
+
