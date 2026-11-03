@@ -57,13 +57,15 @@ This works with the app closed too: Curfew stays in touch with the laptops and t
 
 The **bell** at the top of the home screen keeps every notification of the last 30 days, also the ones you swiped away or missed, with a number for the new ones. Tap one to go to that account. **Clear all** empties the list. Below the list you choose what you want to be told about.
 
-If your phone was away from home, or the laptop had no Wi-Fi, you are told when both are home again; the notification shows when it happened, not when you were told. When a laptop shuts down, restarts or goes to sleep, the app shows that at once ("Shut down", "Asleep").
+Only what is happening now pops up on your phone. What happened while your phone could not reach the laptop (for example, the phone was off or the laptop had no Wi-Fi) goes quietly into the bell's list, with the time it happened. A notification you swipe away does not come back; it stays in the list. When a laptop shuts down, restarts or goes to sleep, the app shows that at once ("Shut down", "Asleep").
 
 ### Screenshots
 
 On a child's page, **Screenshots** takes a picture of their screen when you ask, or by itself every 15 seconds, or every 1, 5 or 15 minutes. You can have it take them only while Discord or Minecraft is open. It works only for children's accounts, never for an administrator's.
 
 Your child is not told and sees nothing when one is taken. These are only pictures Curfew takes; Curfew never reads screenshots your child takes.
+
+Tap a screenshot to see it large. Turn your phone sideways to see it wider (with auto-rotate on), or tap the turn button at the top.
 
 Screenshots stay on the computer for 7 days. Your phone keeps a copy too, encrypted and never in your photos, so you can still look at them while the computer is off. **How much to keep** in the app's Settings chooses the size on the phone (Off, 100 MB, 300 MB or 1 GB); the oldest are removed first.
 
