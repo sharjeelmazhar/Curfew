@@ -10,11 +10,16 @@
 
 | | |
 |---|---|
-| **See what is happening** | Whether each computer is on, who is using it, which apps are open with their logos, which websites they visited and what they searched for. Screenshots of a child's screen, when you ask or every few minutes |
-| **Set the rules** | Daily screen-time limits, bedtimes, open hours, blocked apps and websites, no private windows, only installed programs |
+| **See what is happening** | Whether each computer is on, who is using it, which apps are open with their logos, which websites are open and what they searched for, within seconds. Screenshots of a child's screen, when you ask or every few minutes, to swipe through like your phone's gallery |
+| **Screen time** | A week of each child's time as a bar chart, and every app with its time today and this week, most used first |
+| **Set the rules** | Daily screen-time limits, bedtimes, open hours, blocked apps (press and hold any app, or one switch for Minecraft from any launcher, Discord, Roblox or Steam) and websites, no private windows, only installed programs |
+| **Filters** | An adult filter (family-safe internet and strict safe search) and an AI filter for ChatGPT, Gemini, DeepSeek and about 90 more, all the time or only in school hours |
+| **Safe from the start** | A new child account gets only installed programs, the adult filter and "only with my approval" without you doing anything. Turn any of them off on the phone |
+| **Even when it is off** | Open a computer that is shut down: see its last screen time, apps, websites and screenshots, and change its rules. It gets the changes the moment it comes on, even if your phone is not at home |
 | **Act right now** | Shut down or restart, now or on a timer. Lock the screen, log out, or turn the internet off for one account |
-| **Log in without the password** | Let your child in from your phone, or make an account open only when you allow it |
-| **Get told** | A notification when someone logs in, when a blocked app is opened, or when someone tries to cut the network |
+| **Log in without the password** | Let your child in from your phone: on Ubuntu the login screen opens their account by itself. Or make an account open only when you allow it |
+| **Forgot a password?** | See any account's password on your phone, behind your fingerprint |
+| **Get told** | A notification when someone logs in, opens a blocked app, searches for something bad (also when spelled in tricky ways, with a screenshot), or tries to cut the network |
 
 <p align="center">
   <img src="docs/screens/home.jpg" width="190" alt="Home screen">

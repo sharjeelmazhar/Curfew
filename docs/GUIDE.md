@@ -13,7 +13,7 @@ The timers are silent unless you turn on **Warn them first**, which shows a noti
 
 ### Logging someone in from the phone
 
-Open the account in the app and tap **Log in without the password**; the phone asks for your fingerprint. Then, on the laptop, they click their name at the login screen and are let in (if it is already asking for the password, they press Enter). The approval works once and only for two minutes. If the account is already logged in and locked, its screen simply unlocks.
+Open the account in the app and tap **Log in without the password**; the phone asks for your fingerprint. On Ubuntu (GNOME 45 or newer) the login screen then opens that account by itself, even if someone else's name was chosen there: nobody needs to touch the computer. On other systems they click their name at the login screen and are let in (if it is already asking for the password, they press Enter). The approval works once and only for two minutes. If the account is already logged in and locked, its screen simply unlocks.
 
 Nothing is stored on the phone and no password travels over the network.
 
@@ -31,7 +31,7 @@ On an account's page, under **Websites**, you see each browser the person has us
 
 This reads the browser's own history on the laptop, so it works even when the person is not logged in at that moment, as long as the laptop is on and at home. Clearing the browser history clears it here too.
 
-What it cannot show: **private or incognito windows**. Browsers write nothing to disk for those, so there is nothing to read; switch them off with **Block private windows** (below). Curfew keeps its own copy of a child's history for 7 days, so clearing the history in the browser does not hide it from the phone. Open tabs are read exactly for Firefox; for Chrome they are shown as "the last few minutes", because Chrome does not let anything read its open tabs. Other browsers (Brave, Edge, Tor) are not read.
+What it cannot show: **private or incognito windows**. Browsers write nothing to disk for those, so there is nothing to read; switch them off with **Block private windows** (below). Curfew keeps its own copy of a child's history for 7 days, so clearing the history in the browser does not hide it from the phone. Open tabs are read exactly for Firefox and for the Chrome family (Chrome, Chromium, Brave, Edge, Vivaldi, Opera): a new tab or search shows on your phone within a few seconds while you are at home. Zen, LibreWolf, Floorp and Waterfox are read like Firefox. The Tor Browser is not read.
 
 The list travels over the home Wi-Fi signed but **not encrypted**, the same as everything else Curfew sends, so treat it as private to the home network.
 
@@ -39,11 +39,13 @@ The list travels over the home Wi-Fi signed but **not encrypted**, the same as e
 
 ### Screen time
 
-On a laptop's page, **Screen time** shows every account: how long it was used today, how long yesterday, how long since the laptop was turned on, and each login with its date and time ("2 Oct 2026, 8:55 PM") and when it logged out. The same box is on each account's own page. Logging out and back in adds to the same day's total; the day starts again at midnight, and only today and yesterday are kept.
+On a computer's page, **Screen time** shows the children's accounts (an administrator's time is only on that account's own page). At the top, **This week** compares the children; tap one to see their week as a bar chart, their average a day, their daily limit as a red line, and each login with its date and time ("2 Oct 2026, 8:55 PM") and when it logged out. Tap a bar to see that day. Logging out and back in adds to the same day's total; the day starts again at midnight, and 7 days are kept.
+
+On a child's page, **Apps** lists every app on that account with its time today and this week, most used first. Press and hold an app to block it, or to allow it again. At the top, one switch each blocks **Minecraft** (from any launcher, TLauncher too), **Discord**, **Roblox** and **Steam**.
 
 Time counts while the account is on the screen and unlocked. A locked screen does not count, and neither does an account that was left logged in while someone else used the laptop after "Switch user". The laptop only counts while Curfew is installed, so the first day starts from the moment you install this version.
 
-The phone keeps a copy of the last screen time it saw. When a laptop is shut down or away from home, its page still has **Screen time**, showing that copy and when it was saved ("Last seen 8:55 PM"). As soon as the laptop is back, the numbers are up to date again: the laptop keeps counting even when it has no internet, and the phone picks it all up next time.
+The phone keeps a copy of the last screen time it saw. When a laptop is shut down or away from home, its page still has **Screen time**, showing that copy and when it was saved ("Last seen 8:55 PM"). See also "When a computer is off" below. As soon as the laptop is back, the numbers are up to date again: the laptop keeps counting even when it has no internet, and the phone picks it all up next time.
 
 ### Notifications
 
@@ -57,7 +59,7 @@ This works with the app closed too: Curfew stays in touch with the laptops and t
 
 The **bell** at the top of the home screen keeps every notification of the last 30 days, also the ones you swiped away or missed, with a number for the new ones. Tap one to go to that account. **Clear all** empties the list. Below the list you choose what you want to be told about.
 
-Only what is happening now pops up on your phone. What happened while your phone could not reach the laptop (for example, the phone was off or the laptop had no Wi-Fi) goes quietly into the bell's list, with the time it happened. A notification you swipe away does not come back; it stays in the list. When a laptop shuts down, restarts or goes to sleep, the app shows that at once ("Shut down", "Asleep").
+If your phone was away from home, or the laptop had no Wi-Fi, you are told when both are home again; the notification shows when it happened, not when you were told. When a laptop shuts down, restarts or goes to sleep, the app shows that at once ("Shut down", "Asleep").
 
 ### Screenshots
 
@@ -65,7 +67,7 @@ On a child's page, **Screenshots** takes a picture of their screen when you ask,
 
 Your child is not told and sees nothing when one is taken. These are only pictures Curfew takes; Curfew never reads screenshots your child takes.
 
-Tap a screenshot to see it large. Turn your phone sideways to see it wider (with auto-rotate on), or tap the turn button at the top.
+The newest are at the top. Tap one to open it, then swipe from right to left for older ones and back for newer ones, as in your phone's gallery; pinch or double-tap to zoom.
 
 Screenshots stay on the computer for 7 days. Your phone keeps a copy too, encrypted and never in your photos, so you can still look at them while the computer is off. **How much to keep** in the app's Settings chooses the size on the phone (Off, 100 MB, 300 MB or 1 GB); the oldest are removed first.
 
@@ -90,6 +92,26 @@ On an account's page, **Bedtime** sets the hours each night that account may not
 On an account's page, **Blocked apps** lists apps that child may not open, such as Minecraft or a game launcher. Choose from the apps seen on that account or common ones, or type a name. If they open one, it closes within a few seconds and you get a notification (at most once a minute per app). They see why only if **Show notices on the screen** is on for that account. This works with your phone away and after a restart. Admin accounts cannot be limited, and the same app stays usable on your own account.
 
 It goes by the program's name. **If someone renames a program or copies it under another name, it gets past this.** It never closes Windows, the desktop or Curfew, and it closes a browser only if you choose that browser; to keep one site away use blocked websites. The app ends suddenly, so anything not saved in it is lost. Checking every 3 seconds uses too little of the computer to notice.
+
+### Filters
+
+On a child's **Rules** tab:
+
+- **Adult filter**: adult websites do not open, and Google, YouTube and Bing show only safe results. It works in Firefox and the Chrome family. New children get it on by themselves.
+- **Block AI sites**: ChatGPT, Gemini, Claude, DeepSeek, Copilot, Perplexity, homework-answer sites and about 90 more. Choose **All the time** or **School hours** (Monday to Friday, 8 am to 3 pm). To block another site, add it under blocked websites.
+- **Bad searches**: you get a notification when a child searches for something bad, also when it is spelled in a tricky way ("p0rn", "p o r n"), and a screenshot is taken at that moment if screenshots are on for them. This is always on.
+
+### Safe from the start
+
+When you pair your phone with a computer, every child account on it gets **Only installed programs**, the **Adult filter** and **Only with my approval** turned on by themselves; so does a child account made later. Turn any of them off on that child's Rules tab if you want. A computer that already had your phone before this version keeps its settings as they were.
+
+### When a computer is off
+
+Open a computer that is shut down or away from home: its children are still listed, with what it last told your phone, its screen time, apps, websites and recent screenshots. You can change its rules: block an app, set a limit or a bedtime, turn the filters on or off. The page says how many changes are waiting. The computer makes them the moment it comes on, even if your phone is not at home then, and nothing is ever done twice. Things that only make sense right now (shut down, lock, log in) need the computer on.
+
+### Passwords
+
+On a child's (or an administrator's) **Controls** tab, **Show password** shows that account's password after your fingerprint, and hides it again after 30 seconds. The computer knows a password once it was typed at the login screen (Ubuntu), or in **Set account passwords** (Windows). You can also type one in the app: the computer checks it before keeping it. On Windows that is also what lets the phone log the account in, administrators included.
 
 ### Open hours
 
