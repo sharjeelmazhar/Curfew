@@ -103,7 +103,9 @@ On a child's **Rules** tab:
 
 ### Safe from the start
 
-When you pair your phone with a computer, every child account on it gets **Only installed programs**, the **Adult filter** and **Only with my approval** turned on by themselves; so does a child account made later. Turn any of them off on that child's Rules tab if you want. A computer that already had your phone before this version keeps its settings as they were.
+When you pair your phone with a computer, every child account on it gets **Only installed programs**, the **Adult filter**, **Block AI sites** (all the time), **1.5 hours of screen time a day** and **Only with my approval** turned on by themselves; so does a child account made later. Change or turn off any of them on that child's Rules tab, or add more time for one day. Since 1.4.1 a child already on the computer also gets the adult filter, the AI block and the 1.5 hours once, unless you had already set a daily limit or an AI rule for them; what you change after that stays.
+
+You are always told when a child searches for something bad (also spelled in a tricky way, like p0rn), with a screenshot of that moment when screenshots are on. There is no switch to forget.
 
 ### When a computer is off
 
@@ -112,6 +114,10 @@ Open a computer that is shut down or away from home: its children are still list
 ### Passwords
 
 On a child's (or an administrator's) **Controls** tab, **Show password** shows that account's password after your fingerprint, and hides it again after 30 seconds. The computer knows a password once it was typed at the login screen (Ubuntu), or in **Set account passwords** (Windows). You can also type one in the app: the computer checks it before keeping it. On Windows that is also what lets the phone log the account in, administrators included.
+
+On Windows, an account that signs in with a Microsoft account (an Outlook or Hotmail address) needs that account's own password, the one used on the Microsoft website, not the PIN. Set account passwords finds the address by itself. If Windows refuses a password that works on account.microsoft.com, it was changed after Windows last saw it: sign in to Windows once with it (at the login screen, **Sign-in options**, then the key) and try again. If there is no key there, first turn off **"For improved security, only allow Windows Hello sign-in for Microsoft accounts on this device"** in **Settings > Accounts > Sign-in options** and restart.
+
+After an update or a restart, Windows sometimes signs the last account in by itself and leaves it at the lock screen. Curfew does not count that as a login: you are told only when someone unlocks it.
 
 ### Open hours
 
@@ -192,7 +198,7 @@ It is a remote control, not a lock. A determined child can still:
 - cut the laptop off from the network with a Wi-Fi switch on the laptop's case, or by pulling the cable on a desktop; the app then shows **Off** and you cannot reach it, including for a timer you have not yet set (a timer that is already running still fires, it lives on the laptop). **Airplane mode no longer works for this:** in a standard account its button is gone from the menu at the top right (from the next login after installing), and if it is switched on any other way (the Settings app, a key on the keyboard, the login screen) the laptop turns its Wi-Fi back on within a moment, tells them so and tells your phone; after three tries in two minutes it locks the screen. In an admin account airplane mode works as usual. They can also no longer join another Wi-Fi, type a new Wi-Fi password, forget a network, change the address or DNS, or turn Wi-Fi off: after installing, only an admin account can do any of that
 - start the laptop from a USB stick or another system if the firmware (BIOS) allows it
 - learn the admin password; anyone with it can remove Curfew
-- become administrator without any password by starting the laptop in recovery mode (hold Shift or press Esc while it starts). Only a password on the boot menu (GRUB) stops this
+- on Ubuntu, become administrator without any password by starting the laptop in recovery mode (hold Shift or press Esc while it starts). Only a password on the boot menu (GRUB) stops this. On Windows, Curfew turns off Windows' recovery menu while it is installed, because its command prompt and "Reset this PC" ask for no password (Shift + Restart reaches them from any account); Safe Mode still runs Curfew. Removing Curfew turns the recovery menu back on. To use recovery while Curfew is installed, an administrator can run `reagentc /enable` and restart.
 - move the clock forward in the BIOS while the computer has no internet and your phone cannot reach it. Curfew goes by the real time, not the computer's clock: it asks a large website (Google, or Cloudflare if Google does not answer) every few minutes, and sends nothing about you or the computer, and otherwise your phone tells it the time whenever it talks to the computer. If the clock is wrong by over 5 minutes you get a notice. Moving the clock back does not help them even with no internet, because Curfew remembers the last real time it saw
 
 With only the password of their own standard account they cannot stop, change or remove Curfew, read its keys, or turn their internet back on.
