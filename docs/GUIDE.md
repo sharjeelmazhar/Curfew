@@ -99,7 +99,8 @@ On a child's **Rules** tab:
 
 - **Adult filter**: adult websites do not open, and Google, YouTube and Bing show only safe results. It works in Firefox and the Chrome family. New children get it on by themselves.
 - **Block AI sites**: ChatGPT, Gemini, Claude, DeepSeek, Copilot, Perplexity, homework-answer sites and about 90 more. Choose **All the time** or **School hours** (Monday to Friday, 8 am to 3 pm). To block another site, add it under blocked websites.
-- **Bad searches**: you get a notification when a child searches for something bad, also when it is spelled in a tricky way ("p0rn", "p o r n"), and a screenshot is taken at that moment if screenshots are on for them. This is always on.
+- **Bad searches**: you get a notification when a child searches for something bad, also when it is spelled in a tricky way ("p0rn", "p o r n") or backwards ("kcuf"), and a screenshot is taken at that moment if screenshots are on for them. This is always on.
+- **Catch bad words as they type**: you can also be told the moment a child *types* a bad word, before they press enter or open any page. Turn it on for a child under **Controls**. It watches only the word being typed right now, checks it against the same list (so tricky spellings and backwards words count too), and sends a notification and a screenshot the instant one matches. Nothing else they type is ever kept or sent — only the matched word, and never a password. It works on Linux and Windows, only while that child is the one using the computer, never an adult.
 
 ### Safe from the start
 
@@ -211,6 +212,15 @@ On a computer's page, **Blocked websites** lists the sites children cannot open.
 example `youtube.com`), or long-press a page in a browser's history and choose **Block**. A site is
 blocked with everything under it (`youtube.com` also blocks `www.youtube.com` and `m.youtube.com`). Each
 child's page has its own **Blocked websites** too, for sites only that account may not open.
+Some services use several addresses (YouTube also uses `youtu.be`); add each one.
+
+**Allow only certain websites.** Instead of blocking sites one by one, you can list the only sites a
+child may open and block the whole rest of the web. On a computer's or a child's **Websites** screen,
+add a site under **Allow only certain websites** (for example `google.com`). While that list has
+anything in it, every other site is blocked. The browser checks the address before it opens, so a VPN
+does not get around it — whatever the network does, only the sites you listed load. The computer's
+allow list and a child's own are used together. Clear the list to go back to the ordinary blocklist.
+
 Some services use several addresses (YouTube also uses `youtu.be`); add each one. The switch
 **Block private windows** turns off private and incognito windows for children, so every page they
 open stays in the history. Administrators are never limited. Airplane mode is hidden in children's accounts (top-right menu and Settings) and on the login screen; children cannot switch Bluetooth on or off either, because it is the same switch. On a computer with Wi-Fi, children's accounts also reach the
