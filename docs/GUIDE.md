@@ -5,11 +5,11 @@ Everything the app can do, and what to do if something goes wrong. To install Cu
 ## Using the app
 
 - **Home screen:** one card per laptop. A glowing green power light means it is on; a dim one means off or out of reach. The line below says who is using it. For a laptop that is off it says when the phone last saw it. If a countdown is running you see it here.
-- **Tap a laptop:** the list of accounts, children first and administrators below them, with what each is doing (not logged in, logged in in the background, in use, or locked). Under that: the shut-down timer, Restart, Shut down, Screen time and Blocked websites.
-- **Tap an account:** three tabs. **Activity** shows screen time, what is open, websites and screenshots. **Rules** has the daily limit, bedtime, open hours, blocked apps and websites and the switches (an administrator has no rules, so no tab). **Controls** has Lock screen, Log out, the internet for that account and the shut-down timer. **Log in without the password** stays at the top whenever that account is not on the screen.
+- **Tap a laptop:** one card per child, with how much time is left today and the buttons used most: **+30 min**, **Log in** or **Unlock** (when they are not on the screen), **Internet off** and **Shut down**. Tap the card itself for everything else. Administrators are listed below the children. Under them: **The whole computer** with Restart, Shut down and the timer.
+- **Tap an account:** five tabs, each with everything about one thing. **Time**: screen time, the daily limit (with **Back to the limit** to undo extra time given by mistake), bedtime and open hours. **Apps**: what is open, every app installed with its use, the blocked apps and the app switches. **Web**: the browsers' history, the filters, the blocked websites and that account's internet. **Safety**: the protection presets, screenshots, the alerts and who may log in. **Controls**: Lock screen, Log out, Restart, Shut down and the timer (an administrator has no Safety tab).
 - **The pencil** at the top of a laptop or an account gives it a name of your own ("Emma's computer", "Gaming"). The name exists only in the app; nothing changes on the laptop.
 
-The timers are silent unless you turn on **Warn them first**, which shows a notice on the laptop when the timer starts and again one minute before the end.
+The timer either shuts the computer down or, with **Log out**, logs the children out and leaves the computer on (on a child's page it logs out only that child). It is silent unless you turn on **Warn them first**, which shows a notice on the laptop when the timer starts and again one minute before the end.
 
 ### Logging someone in from the phone
 
@@ -57,7 +57,7 @@ The phone tells you, within a few seconds, when:
 
 This works with the app closed too: Curfew stays in touch with the laptops and the laptop tells the phone the moment something happens, the way a chat app gets its messages. Android then shows a quiet notice, **Watching 1 computer**, which you can hide by holding it. The first time, tap **Allow notifications** and **Allow** (to run in the background) on the home screen. On Xiaomi, Redmi and POCO phones also turn on **Autostart** for Curfew: the button is under the bell, **If notifications come late**.
 
-The **bell** at the top of the home screen keeps every notification of the last 30 days, also the ones you swiped away or missed, with a number for the new ones. Tap one to go to that account. **Clear all** empties the list. Below the list you choose what you want to be told about.
+The **bell** at the top of the home screen keeps every notification of the last 30 days, also the ones you swiped away or missed, with a number for the new ones. Tap one to go to that account. A bad-word alert has **See the picture**, which opens the screenshot taken at that moment; the alerts that need a look come first. **Clear all** empties the list. Below the list you choose what you want to be told about.
 
 If your phone was away from home, or the laptop had no Wi-Fi, you are told when both are home again; the notification shows when it happened, not when you were told. When a laptop shuts down, restarts or goes to sleep, the app shows that at once ("Shut down", "Asleep").
 

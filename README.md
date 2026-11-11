@@ -16,7 +16,7 @@
 | **Filters** | An adult filter (family-safe internet and strict safe search) and an AI filter for ChatGPT, Gemini, DeepSeek and about 90 more, all the time or only in school hours |
 | **Safe from the start** | Every child account gets only installed programs, the adult filter, the AI block, 1.5 hours of screen time a day and "only with my approval" without you doing anything. Change any of them on the phone |
 | **Even when it is off** | Open a computer that is shut down: see its last screen time, apps, websites and screenshots, and change its rules. It gets the changes the moment it comes on, even if your phone is not at home |
-| **Act right now** | Shut down or restart, now or on a timer. Lock the screen, log out, or turn the internet off for one account |
+| **Act right now** | Shut down or restart, now or on a timer, or log the children out on a timer and keep the computer on. Lock the screen, log out, or turn the internet off for one account |
 | **Log in without the password** | Let your child in from your phone: on Ubuntu the login screen opens their account by itself. Or make an account open only when you allow it |
 | **Forgot a password?** | See any account's password on your phone, behind your fingerprint |
 | **Get told** | A notification when someone logs in, opens a blocked app, searches for something bad or types it (even without pressing enter, and when spelled in tricky ways or backwards, with a screenshot), or tries to cut the network |
