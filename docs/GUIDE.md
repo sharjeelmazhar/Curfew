@@ -243,8 +243,8 @@ child's account Curfew then keeps Bluetooth on, connects the speaker by itself w
 (it keeps looking every 15 seconds), makes it the computer's sound output, and keeps the speaker and every
 program at half volume or louder, never muted. If a child turns it down it goes straight back up and you
 are told ("tried to turn the speaker down"). Children cannot pair, remove or disconnect devices. In your
-own account nothing is changed: Wi-Fi and Bluetooth are yours to change. On a computer with Wi-Fi, children's accounts also reach the
-internet over Wi-Fi only, not through a network cable. A computer without Wi-Fi keeps using its cable.
+own account nothing is changed: Wi-Fi and Bluetooth are yours to change. While the computer is on Wi-Fi, children's accounts also reach the
+internet over Wi-Fi only, not through a network cable. A computer that is online by cable (no Wi-Fi, or its Wi-Fi is not connected) keeps using its cable, for children too.
 
 **On Windows website blocking is thinner.** It tells Windows itself to find nothing for a blocked site and every address under it, and adds the settings of Edge, Chrome, Brave and Firefox. That works for programs that ask Windows where a site is, but only while a child is on the screen, not per account. A browser or app that looks up addresses on its own (private DNS, a built-in VPN, Tor) gets past it. Firefox, Chrome and Edge private windows are blocked (Brave gets the same settings, not yet seen working); a browser Curfew does not know about is not.
 
