@@ -65,6 +65,8 @@ If your phone was away from home, or the laptop had no Wi-Fi, you are told when 
 
 On a child's page, **Screenshots** takes a picture of their screen when you ask, or by itself every 15 seconds, or every 1, 5 or 15 minutes. You can have it take them only while Discord or Minecraft is open. It works only for children's accounts, never for an administrator's.
 
+To keep one, open it and tap the **save** arrow at the top: it goes into your phone's gallery, in **Pictures › Curfew**.
+
 Your child is not told and sees nothing when one is taken. These are only pictures Curfew takes; Curfew never reads screenshots your child takes.
 
 The newest are at the top. Tap one to open it, then swipe from right to left for older ones and back for newer ones, as in your phone's gallery; pinch or double-tap to zoom.
@@ -189,6 +191,7 @@ It removes the service and everything it set up or stored, and the laptop is as 
 
 - **The laptop shows Off but it is on.** Is the laptop on the Wi-Fi in the account that is logged in? See the Wi-Fi warning in step 1. Is your phone on the same Wi-Fi (not mobile data, not a guest network)?
 - **Check the service on the laptop:** `sudo curfew status` shows whether it is running, the paired phones, the timer and the accounts.
+- **LocalSend (or a similar sharing app) cannot send to a Windows PC.** The first time such an app opens in a child's account, Windows asks "Allow access?". A child cannot answer that, so until version 1.5.3 Windows blocked the app. Curfew now allows these apps itself, for your home network only, a few seconds after the question appears; the child can click either button. Update Curfew on that PC and open the app once more. Sharing still needs both devices on the same Wi-Fi: a guest network, or a router with "AP isolation" (or "client isolation") turned on, keeps devices from seeing each other.
 - **The scanner says it is not ready.** The scanner is a small part of Google Play services that downloads the first time. Wait a minute with internet on and try again, or type the address and code.
 
 ## What Curfew cannot stop
@@ -221,9 +224,26 @@ anything in it, every other site is blocked. The browser checks the address befo
 does not get around it — whatever the network does, only the sites you listed load. The computer's
 allow list and a child's own are used together. Clear the list to go back to the ordinary blocklist.
 
+Allow-only works inside the web browsers. Other programs, such as Microsoft Teams (which has a YouTube tab
+inside it) or Zoom, are not browsers: to stop a site in **every** program, add it under **Block certain
+websites** as well. That list is enforced by the computer's firewall for the whole account.
+
+**Set for class.** On a child's **Safety** tab, **For class** does it all in one tap: only Zoom, Teams,
+Gmail, Google Classroom, Docs, Drive, Meet and DuckDuckGo open in the browsers; games and Terminal are
+closed; and YouTube and TikTok (`youtube.com`, `youtu.be`, `youtube-nocookie.com`, `googlevideo.com`,
+`ytimg.com`, `tiktok.com`) are blocked in every program, also inside Teams. **For games** opens the web
+and YouTube again and keeps any site you blocked yourself.
+
 Some services use several addresses (YouTube also uses `youtu.be`); add each one. The switch
 **Block private windows** turns off private and incognito windows for children, so every page they
-open stays in the history. Administrators are never limited. Airplane mode is hidden in children's accounts (top-right menu and Settings) and on the login screen; children cannot switch Bluetooth on or off either, because it is the same switch. On a computer with Wi-Fi, children's accounts also reach the
+open stays in the history. Administrators are never limited. Airplane mode is hidden in children's accounts (top-right menu and Settings) and on the login screen; children cannot switch Bluetooth on or off either, and its button is hidden from them.
+
+**A Bluetooth speaker for class (Linux).** Pair the speaker once from your own administrator account. In a
+child's account Curfew then keeps Bluetooth on, connects the speaker by itself whenever it is switched on
+(it keeps looking every 15 seconds), makes it the computer's sound output, and keeps the speaker and every
+program at half volume or louder, never muted. If a child turns it down it goes straight back up and you
+are told ("tried to turn the speaker down"). Children cannot pair, remove or disconnect devices. In your
+own account nothing is changed: Wi-Fi and Bluetooth are yours to change. On a computer with Wi-Fi, children's accounts also reach the
 internet over Wi-Fi only, not through a network cable. A computer without Wi-Fi keeps using its cable.
 
 **On Windows website blocking is thinner.** It tells Windows itself to find nothing for a blocked site and every address under it, and adds the settings of Edge, Chrome, Brave and Firefox. That works for programs that ask Windows where a site is, but only while a child is on the screen, not per account. A browser or app that looks up addresses on its own (private DNS, a built-in VPN, Tor) gets past it. Firefox, Chrome and Edge private windows are blocked (Brave gets the same settings, not yet seen working); a browser Curfew does not know about is not.
