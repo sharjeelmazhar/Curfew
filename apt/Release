@@ -1,0 +1,8 @@
+Origin: Curfew
+Label: Curfew
+Suite: stable
+Date: Sun, 15 Nov 2026 17:41:24 +0000
+Description: Curfew, the laptop side
+SHA256:
+ ca10f1e5ba45fc24d33617b82108b2c06e9cb51f13f5ce724317fac4fd0d96ce 1984 Packages
+ 812ab494e2d889727f296e1917fda4ed7ac8b2754554cb8718ad05d9df24114e 780 Packages.gz
