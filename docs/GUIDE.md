@@ -108,6 +108,8 @@ On a child's **Rules** tab:
 
 When you pair your phone with a computer, every child account on it gets **Only installed programs**, the **Adult filter**, **Block AI sites** (all the time), **1.5 hours of screen time a day** and **Only with my approval** turned on by themselves; so does a child account made later. Change or turn off any of them on that child's Rules tab, or add more time for one day. Since 1.4.1 a child already on the computer also gets the adult filter, the AI block and the 1.5 hours once, unless you had already set a daily limit or an AI rule for them; what you change after that stays.
 
+**Only installed programs** ends a program that sits in a folder the child can change (Downloads, the Desktop, a USB stick). On Windows, since 1.5.10, a folder outside Program Files that an administrator made and children can only read (for example `C:\Games`) counts as installed, so games put there just work.
+
 You are always told when a child searches for something bad (also spelled in a tricky way, like p0rn), with a screenshot of that moment when screenshots are on. There is no switch to forget.
 
 ### When a computer is off
@@ -232,7 +234,8 @@ websites** as well. That list is enforced by the computer's firewall for the who
 Gmail, Google Classroom, Docs, Drive, Meet and DuckDuckGo open in the browsers; games and Terminal are
 closed; and YouTube and TikTok (`youtube.com`, `youtu.be`, `youtube-nocookie.com`, `googlevideo.com`,
 `ytimg.com`, `tiktok.com`) are blocked in every program, also inside Teams. **For games** opens the web
-and YouTube again and keeps any site you blocked yourself.
+and YouTube again, keeps any site you blocked yourself, and lets Minecraft (TLauncher too) and Roblox start
+under **Only installed programs** by allowing their own folders.
 
 Some services use several addresses (YouTube also uses `youtu.be`); add each one. The switch
 **Block private windows** turns off private and incognito windows for children, so every page they
